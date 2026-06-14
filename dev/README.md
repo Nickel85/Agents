@@ -3,6 +3,10 @@
 Use the development environment when you want to test the current repository
 code without replacing the installed `mongoose` release.
 
+This is the default way to test source changes in this repository. Keep the
+normal installed `mongoose` available for release/install/update validation,
+but use `mongoose-dev` and `Njord-dev` while iterating on code.
+
 The setup creates:
 
 - `.dev-bin\mongoose-dev.cmd`
@@ -55,4 +59,3 @@ Reset the dev state:
 This removes `.dev-localappdata` and recreates the source-backed shims. It does
 not touch `%LOCALAPPDATA%\Agents`, the official `mongoose.exe`, or normal
 installed agents.
-

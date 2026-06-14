@@ -169,6 +169,8 @@ Njord-dev
 `mongoose-dev` and `Njord-dev` use the current checkout every time and keep
 their state under `.dev-localappdata`. Your normal `%LOCALAPPDATA%\Agents`
 install and `mongoose` command are unchanged. See [dev/README.md](dev/README.md).
+Repository working rules in [AGENTS.md](AGENTS.md) make this the default test
+path for source changes.
 
 Then use:
 
