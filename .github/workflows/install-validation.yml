@@ -29,6 +29,10 @@ jobs:
         shell: pwsh
         run: python ./tests/mongoose-runtime-observability-validation.py
 
+      - name: Validate mongoose LLM cold-start behavior
+        shell: pwsh
+        run: python ./tests/mongoose-llm-cold-start-validation.py
+
       - name: Validate release version metadata
         shell: pwsh
         run: python ./tests/release-version-validation.py

@@ -37,6 +37,10 @@ DEFAULT_LOG_RETENTION_DAYS = 30
 DEFAULT_JOB_RETENTION = 50
 DEFAULT_OLLAMA_TAGS_ENDPOINT = "http://localhost:11434/api/tags"
 DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_LLM_PING_TIMEOUT_SECONDS = 10.0
+DEFAULT_REMOTE_LLM_INVOKE_TIMEOUT_SECONDS = 30.0
+DEFAULT_LOCAL_LLM_INVOKE_TIMEOUT_SECONDS = 300.0
+DEFAULT_LOCAL_LLM_WARMUP_TIMEOUT_SECONDS = 300.0
 OLLAMA_WINDOWS_INSTALL_URL = "https://ollama.com/install.ps1"
 MONGOOSE_RELEASES_API_URL = "https://api.github.com/repos/Nickel85/Mongoose/releases"
 MONGOOSE_RELEASE_ASSET_NAME = "mongoose.exe"
@@ -2508,9 +2512,12 @@ def bootstrap_ollama(endpoint: str, model: str, yes: bool) -> tuple[bool, list[s
     return True, models
 
 
-def warm_llm_profile(name: str, timeout_seconds: float) -> int:
+def warm_llm_profile(name: str, timeout_seconds: float | None) -> int:
     prompt = "Reply with only: ready"
-    for timeout in (timeout_seconds, max(timeout_seconds, 90.0)):
+    first_timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_LOCAL_LLM_INVOKE_TIMEOUT_SECONDS
+    warmup_timeout = max(first_timeout, DEFAULT_LOCAL_LLM_WARMUP_TIMEOUT_SECONDS)
+    print_muted(f"Warming local model with timeout: {warmup_timeout:g} seconds")
+    for timeout in (first_timeout, warmup_timeout):
         code, payload = invoke_llm_profile(profile_name=name, prompt=prompt, timeout_seconds=timeout)
         if code == 0:
             print_success("LLM provider invocation verified.")
@@ -2518,11 +2525,15 @@ def warm_llm_profile(name: str, timeout_seconds: float) -> int:
             if content:
                 print(label_line("Response", content))
             return 0
-        if timeout >= 90.0:
+        if timeout >= warmup_timeout:
             message = str(payload.get("message", "LLM provider invocation failed."))
             print_warning(message)
             return code
-        print_muted("Initial local model invocation timed out; retrying with a longer warmup timeout.")
+        message = str(payload.get("message", ""))
+        if "timed out" in message.lower():
+            print_muted("Initial local model invocation timed out; retrying with a longer warmup timeout.")
+        else:
+            print_muted("Initial local model invocation did not complete; retrying with a longer warmup timeout.")
     return 1
 
 
@@ -2658,13 +2669,13 @@ def cmd_llm_setup(args: argparse.Namespace) -> int:
 
     print("")
     print_heading("Ping")
-    ping_args = argparse.Namespace(name=name, timeout=args.timeout)
+    ping_args = argparse.Namespace(name=name, timeout=effective_llm_ping_timeout(args.timeout))
     result = cmd_llm_ping(ping_args)
     if result != 0:
         print_muted("Review the diagnostics above, then rerun: mongoose llm ping " + name)
         return result
 
-    if args.bootstrap and provider == "local-http":
+    if provider == "local-http":
         print("")
         print_heading("Warmup")
         return warm_llm_profile(name, args.timeout)
@@ -2761,8 +2772,28 @@ def fake_llm_invoke(profile: dict[str, Any], messages: list[dict[str, str]]) -> 
     }
 
 
+def llm_profile_provider(profile: dict[str, Any]) -> str:
+    return str(profile.get("provider", "")).strip()
+
+
+def is_local_llm_profile(profile: dict[str, Any]) -> bool:
+    return llm_profile_provider(profile) == "local-http"
+
+
+def effective_llm_ping_timeout(timeout_seconds: float | None) -> float:
+    return timeout_seconds if timeout_seconds is not None else DEFAULT_LLM_PING_TIMEOUT_SECONDS
+
+
+def effective_llm_invoke_timeout(profile: dict[str, Any], timeout_seconds: float | None) -> float:
+    if timeout_seconds is not None:
+        return timeout_seconds
+    if is_local_llm_profile(profile):
+        return DEFAULT_LOCAL_LLM_INVOKE_TIMEOUT_SECONDS
+    return DEFAULT_REMOTE_LLM_INVOKE_TIMEOUT_SECONDS
+
+
 def http_llm_ping(profile: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
-    provider = str(profile.get("provider", "")).strip()
+    provider = llm_profile_provider(profile)
     endpoint = str(profile.get("endpoint", "")).strip()
     secret = profile.get("secret", {}) if isinstance(profile.get("secret", {}), dict) else {}
     api_key = os.environ.get(str(secret.get("env", "")).strip(), "")
@@ -2793,7 +2824,7 @@ def http_llm_ping(profile: dict[str, Any], timeout_seconds: float) -> dict[str, 
 
 
 def http_llm_invoke(profile: dict[str, Any], messages: list[dict[str, str]], timeout_seconds: float) -> dict[str, Any]:
-    provider = str(profile.get("provider", "")).strip()
+    provider = llm_profile_provider(profile)
     endpoint = str(profile.get("endpoint", "")).strip()
     model = str(profile.get("model", "")).strip()
     secret = profile.get("secret", {}) if isinstance(profile.get("secret", {}), dict) else {}
@@ -2897,7 +2928,7 @@ def invoke_llm_profile(
     profile_name: str | None,
     prompt: str,
     system_prompt: str = "",
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
     name, profile, error = resolve_llm_profile(profile_name)
     if error:
@@ -2914,11 +2945,12 @@ def invoke_llm_profile(
     messages.append({"role": "user", "content": prompt})
 
     start = time.perf_counter()
-    provider = str(profile.get("provider", "")).strip()
+    provider = llm_profile_provider(profile)
+    invoke_timeout = effective_llm_invoke_timeout(profile, timeout_seconds)
     if provider == "fake":
         result = fake_llm_invoke(profile, messages)
     else:
-        result = http_llm_invoke(profile, messages, timeout_seconds=timeout_seconds)
+        result = http_llm_invoke(profile, messages, timeout_seconds=invoke_timeout)
     latency_ms = int((time.perf_counter() - start) * 1000)
 
     response = result.get("response", {}) if isinstance(result.get("response", {}), dict) else {}
@@ -2992,11 +3024,12 @@ def cmd_llm_ping(args: argparse.Namespace) -> int:
         return 1
 
     start = time.perf_counter()
-    provider = str(profile.get("provider", "")).strip()
+    provider = llm_profile_provider(profile)
+    timeout = effective_llm_ping_timeout(args.timeout)
     if provider == "fake":
         result = fake_llm_ping(profile)
     else:
-        result = http_llm_ping(profile, timeout_seconds=args.timeout)
+        result = http_llm_ping(profile, timeout_seconds=timeout)
     latency_ms = int((time.perf_counter() - start) * 1000)
 
     if result.get("ok"):
@@ -3692,7 +3725,7 @@ advanced manual setup:
     llm_setup.add_argument("--yes", action="store_true", help="Accept non-secret defaults for omitted prompts.")
     llm_setup.add_argument("--skip-ping", action="store_true", help="Configure the profile without pinging it.")
     llm_setup.add_argument("--bootstrap", action="store_true", help="For Ollama, install/check Ollama, pull the model, configure the profile, and verify invocation.")
-    llm_setup.add_argument("--timeout", type=float, default=10.0, help="Ping timeout in seconds.")
+    llm_setup.add_argument("--timeout", type=float, help="Override ping and warmup timeout in seconds.")
     llm_setup.set_defaults(handler=cmd_llm_setup)
 
     llm_add = llm_subparsers.add_parser(
@@ -3736,7 +3769,7 @@ advanced manual setup:
         help="Test a configured LLM profile without printing secrets.",
     )
     llm_ping.add_argument("name", nargs="?", help="Profile name; defaults to the active default profile.")
-    llm_ping.add_argument("--timeout", type=float, default=10.0, help="Ping timeout in seconds.")
+    llm_ping.add_argument("--timeout", type=float, help="Override ping timeout in seconds.")
     llm_ping.set_defaults(handler=cmd_llm_ping)
 
     llm_invoke = llm_subparsers.add_parser(
@@ -3747,7 +3780,7 @@ advanced manual setup:
     llm_invoke.add_argument("prompt", nargs="*", help="Prompt text. Reads stdin when omitted.")
     llm_invoke.add_argument("--profile", help="Profile name; defaults to the active default profile.")
     llm_invoke.add_argument("--system", help="Optional system prompt.")
-    llm_invoke.add_argument("--timeout", type=float, default=30.0, help="Invocation timeout in seconds.")
+    llm_invoke.add_argument("--timeout", type=float, help="Override invocation timeout in seconds.")
     llm_invoke.add_argument("--json", action="store_true", help="Print structured invocation result JSON.")
     llm_invoke.set_defaults(handler=cmd_llm_invoke)
 

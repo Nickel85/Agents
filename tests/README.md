@@ -224,6 +224,27 @@ This test verifies:
 - `mongoose jobs list`, `mongoose jobs show`, and `mongoose status` report the
   recorded activity.
 
+## Mongoose LLM Cold-Start Validation
+
+Script:
+
+```text
+tests/mongoose-llm-cold-start-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\mongoose-llm-cold-start-validation.py
+```
+
+This test verifies:
+
+- local/Ollama LLM profiles use a cold-start tolerant default invoke timeout.
+- explicit timeout overrides are still respected.
+- `mongoose llm setup --provider ollama` warms an installed local model even
+  when `--bootstrap` is not used.
+
 ## Release Version Validation
 
 Script:

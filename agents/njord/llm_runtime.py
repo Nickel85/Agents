@@ -14,7 +14,7 @@ from fact_packet import FinanceFactPacket
 
 
 MAX_CONTEXT_CHARS = 5000
-DEFAULT_LLM_TIMEOUT_SECONDS = 45.0
+DEFAULT_LLM_TIMEOUT_SECONDS = 330.0
 
 
 @dataclass(frozen=True)
