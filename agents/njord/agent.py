@@ -15,7 +15,7 @@ if str(AGENT_ROOT) not in sys.path:
 
 from config import ConfigFileError, config_status_lines, current_config_snapshot
 from finance_review import load_finance_review
-from llm_runtime import narrate_finance_response
+from llm_runtime import narrate_finance_response, synthesize_chat_response
 from router import route_request
 from session import run_repl
 from terminal import should_use_color, style_output
@@ -234,21 +234,9 @@ def run_config_status() -> tuple[bool, str]:
 
 def answer_request(request: str) -> tuple[bool, str]:
     route = route_request(request)
-
-    if route.capability == "hello-world":
-        ok, output = run_hello_world_with_status("Njord")
-    elif route.capability == "brief":
-        ok, output = run_brief()
-    elif route.capability == "ynab-spending-review":
-        ok, output = run_ynab_spending_review()
-    elif route.capability == "ynab-budget-summary":
-        ok, output = run_ynab_budget_summary()
-    elif route.capability == "finance-review":
-        ok, output = run_finance_review_for_request(request)
-    elif route.capability == "config-status":
-        ok, output = run_config_status()
-    else:
-        return False, f"I do not know how to run capability: {route.capability}"
+    ok, output = run_routed_capability(route.capability, request)
+    if not ok and output.startswith("I do not know"):
+        return False, output
 
     response = f"Request: {request}\nCapability: {route.capability}\nReason: {route.reason}\n\n{output}"
     if ok and route.capability in {"brief", "ynab-spending-review", "ynab-budget-summary", "finance-review"}:
@@ -264,6 +252,79 @@ def answer_request(request: str) -> tuple[bool, str]:
             response = f"{response}\n\nLLM narration unavailable\n{narration.diagnostic}"
 
     return ok, response
+
+
+def run_routed_capability(capability: str, request: str) -> tuple[bool, str]:
+    if capability == "hello-world":
+        return run_hello_world_with_status("Njord")
+    if capability == "brief":
+        return run_brief()
+    if capability == "ynab-spending-review":
+        return run_ynab_spending_review()
+    if capability == "ynab-budget-summary":
+        return run_ynab_budget_summary()
+    if capability == "finance-review":
+        return run_finance_review_for_request(request)
+    if capability == "config-status":
+        return run_config_status()
+    return False, f"I do not know how to run capability: {capability}"
+
+
+def answer_chat_request(request: str) -> tuple[bool, str]:
+    route = route_request(request)
+    ok, output = run_routed_capability(route.capability, request)
+    if not ok and output.startswith("I do not know"):
+        return False, output
+
+    if route.capability == "config-status":
+        return ok, chat_fallback_response(
+            request=request,
+            capability=route.capability,
+            reason=route.reason,
+            deterministic_output=output,
+            diagnostic="Configuration status is deterministic and does not need LLM synthesis.",
+        )
+
+    if route.capability == "hello-world":
+        return ok, output
+
+    chat = synthesize_chat_response(
+        request=request,
+        capability=route.capability,
+        deterministic_output=output,
+    )
+    if chat.ok:
+        profile = f" ({chat.profile})" if chat.profile else ""
+        return ok, f"{chat.text}\n\nLLM profile{profile}"
+
+    return ok, chat_fallback_response(
+        request=request,
+        capability=route.capability,
+        reason=route.reason,
+        deterministic_output=output,
+        diagnostic=chat.diagnostic,
+    )
+
+
+def chat_fallback_response(
+    *,
+    request: str,
+    capability: str,
+    reason: str,
+    deterministic_output: str,
+    diagnostic: str,
+) -> str:
+    lines = [
+        "I pulled the relevant finance capability, but I could not synthesize a live LLM response.",
+        f"Reason: {diagnostic}",
+        "",
+        f"Capability used: {capability}",
+        f"Why: {reason}",
+        "",
+        "Finance metrics and source output:",
+        deterministic_output,
+    ]
+    return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -393,7 +454,7 @@ def main() -> None:
                 input_stream=sys.stdin,
                 output_stream=sys.stdout,
                 color_enabled=color_enabled,
-                answer_request=answer_request,
+                answer_request=answer_chat_request,
             )
         )
 

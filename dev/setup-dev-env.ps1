@@ -46,6 +46,7 @@ $escapedRepo = $repo.Replace('"', '""')
 $escapedLocalAppData = $devLocalAppData.Replace('"', '""')
 $escapedMongoose = $mongooseCli.Replace('"', '""')
 $escapedNjord = $njordAgent.Replace('"', '""')
+$mongooseInvoke = $mongooseCli.Replace("\", "/").Replace('"', '""')
 
 $mongooseDev = @"
 @echo off
@@ -58,7 +59,7 @@ $njordDev = @"
 @echo off
 setlocal
 set "LOCALAPPDATA=$escapedLocalAppData"
-set "MONGOOSE_LLM_INVOKE=python ""$escapedMongoose"" llm invoke --json"
+set "MONGOOSE_LLM_INVOKE=python $mongooseInvoke llm invoke --json"
 python "$escapedNjord" %*
 "@
 

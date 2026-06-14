@@ -93,6 +93,14 @@ $run = Invoke-DevCommand -FileName $mongooseDev -Arguments @("run", "Njord", "he
 Assert-True ($run.Output -match "Hello, Dev.") "mongoose-dev run did not execute current checkout Njord capability."
 Assert-True ($run.Output -match "Njord is ready") "mongoose-dev run did not execute the Njord source capability."
 
+$llm = Invoke-DevCommand -FileName $mongooseDev -Arguments @("llm", "add", "fake-main", "--provider", "fake", "--model", "fake-chat", "--default")
+Assert-True ($llm.ExitCode -eq 0) "mongoose-dev llm add fake-main failed. Output: $($llm.Output)"
+
+$chat = Invoke-DevCommand -FileName $njordDev -InputText "review my finances`nexit`n"
+Assert-True ($chat.ExitCode -eq 0) "Njord-dev finance chat failed. Output: $($chat.Output)"
+Assert-True ($chat.Output -match "Fake LLM narration") "Njord-dev did not use the dev fake LLM backend for finance chat."
+Assert-True ($chat.Output -notmatch "Capability: finance-review") "Njord-dev finance chat exposed command-style capability metadata."
+
 $njord = Invoke-DevCommand -FileName $njordDev -InputText "exit`n"
 Assert-True ($njord.ExitCode -eq 0) "Njord-dev REPL failed. Output: $($njord.Output)"
 Assert-True ($njord.Output -match "Njord>") "Njord-dev did not open the REPL prompt."

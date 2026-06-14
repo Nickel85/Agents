@@ -97,6 +97,29 @@ def build_narration_prompt(*, request: str, capability: str, deterministic_outpu
     )
 
 
+def build_chat_prompt(*, request: str, capability: str, deterministic_output: str) -> str:
+    context = redact_for_prompt(deterministic_output)
+    return "\n".join(
+        [
+            "You are Njord, an interactive personal-finance assistant.",
+            "Answer like a conversational assistant, not a command-line report.",
+            "Use the YNAB-backed capability output and finance metrics below as your source of truth.",
+            "Lead with the answer the user probably wants, then cite the most relevant metrics.",
+            "Keep it concise, practical, and specific.",
+            "If data is missing or a connection failed, say what is missing and what the user should do next.",
+            "Do not invent balances, transactions, categories, income, outflows, or budget changes.",
+            "Do not claim that any YNAB write has happened.",
+            "Budget-changing requests can only result in read-only analysis or a future draft plan.",
+            "",
+            f"User message: {request}",
+            f"Selected capability: {capability}",
+            "",
+            "Capability output and metrics:",
+            context,
+        ]
+    )
+
+
 def build_decision_prompt(*, request: str, fact_packet: FinanceFactPacket) -> str:
     return "\n".join(
         [
@@ -160,6 +183,51 @@ def narrate_finance_response(*, request: str, capability: str, deterministic_out
     system_prompt = (
         "You narrate read-only finance analysis from deterministic facts. "
         "Keep generated text separate from facts and never propose unapproved writes."
+    )
+    completed = subprocess.run(
+        [*command, "--system", system_prompt],
+        input=prompt,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=45,
+    )
+    output = completed.stdout.strip()
+    if not output:
+        diagnostic = completed.stderr.strip() or "Mongoose LLM invocation returned no output."
+        return LlmNarration(False, diagnostic=diagnostic)
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return LlmNarration(False, diagnostic="Mongoose LLM invocation returned invalid JSON.")
+
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        message = str(payload.get("message", "") if isinstance(payload, dict) else "").strip()
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        if isinstance(error, dict) and error.get("message"):
+            message = str(error.get("message"))
+        return LlmNarration(False, diagnostic=message or "Mongoose LLM invocation failed.")
+
+    response = payload.get("response", {}) if isinstance(payload.get("response", {}), dict) else {}
+    text = str(response.get("content", "")).strip()
+    if not text:
+        return LlmNarration(False, diagnostic="Mongoose LLM invocation returned an empty response.")
+    return LlmNarration(True, text=text, profile=str(payload.get("profile", "")))
+
+
+def synthesize_chat_response(*, request: str, capability: str, deterministic_output: str) -> LlmNarration:
+    command = llm_invoke_command()
+    if not command:
+        return LlmNarration(False, diagnostic="No Mongoose LLM invocation command is available.")
+
+    prompt = build_chat_prompt(
+        request=request,
+        capability=capability,
+        deterministic_output=deterministic_output,
+    )
+    system_prompt = (
+        "You are an interactive read-only finance assistant. "
+        "Use capability facts and metrics only; never invent data or claim writes."
     )
     completed = subprocess.run(
         [*command, "--system", system_prompt],

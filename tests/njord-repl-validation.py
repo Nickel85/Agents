@@ -175,17 +175,24 @@ try:
     assert_true("Capability: finance-review" in review_answer, "Finance review request did not route to finance-review.")
     assert_true("LLM narration (fake-main)" in review_answer, "Finance review answer did not use configured LLM narration.")
 
+    ok, chat_answer = njord_agent.answer_chat_request("review my finances")
+    assert_true(ok, "Njord chat finance review did not succeed with fixture review.")
+    assert_true("Fake LLM narration" in chat_answer, "Chat finance review did not synthesize with configured LLM.")
+    assert_true("LLM profile (fake-main)" in chat_answer, "Chat finance review did not label the configured LLM profile.")
+    assert_true("Capability: finance-review" not in chat_answer, "Chat finance review exposed command-style capability metadata.")
+
     output = io.StringIO()
     repl_code = run_repl(
         input_stream=io.StringIO("review my finances\nexit\n"),
         output_stream=output,
         color_enabled=False,
-        answer_request=njord_agent.answer_request,
+        answer_request=njord_agent.answer_chat_request,
     )
     assert_true(repl_code == 0, "LLM-backed conversational REPL session did not exit cleanly.")
     repl_output = output.getvalue()
-    assert_true("Capability: finance-review" in repl_output, "REPL conversation did not render capability metadata.")
-    assert_true("LLM narration (fake-main)" in repl_output, "REPL conversation did not use the configured LLM backend.")
+    assert_true("Fake LLM narration" in repl_output, "REPL conversation did not use the configured LLM backend.")
+    assert_true("LLM profile (fake-main)" in repl_output, "REPL conversation did not label the configured LLM profile.")
+    assert_true("Capability: finance-review" not in repl_output, "REPL conversation exposed command-style capability metadata.")
 finally:
     njord_agent.run_ynab_budget_summary = original_summary
     njord_agent.run_finance_review_for_request = original_finance_review

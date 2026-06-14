@@ -184,11 +184,13 @@ python agents\njord\agent.py finance-review
 mongoose run Njord finance-review
 ```
 
-The review composes cash-flow forecasting and financial-risk loops, prints fact
-packet identifiers, asks the configured Mongoose LLM backend for structured
-judgment when available, validates that LLM decision contract, and keeps all
-behavior read-only. Natural-language requests can ask for a finance review, but
-they cannot mutate YNAB before guarded planning and write execution exist.
+The review composes cash-flow forecasting and financial-risk loops, builds fact
+packets and finance metrics, asks the configured Mongoose LLM backend for
+structured judgment when available, validates that LLM decision contract, and
+keeps all behavior read-only. In the REPL, Njord uses those capability outputs
+as source material for a conversational answer instead of exposing the user to
+the raw command report. Natural-language requests can ask for a finance review,
+but they cannot mutate YNAB before guarded planning and write execution exist.
 
 If no Mongoose LLM profile is configured, or if the backend does not return
 valid structured JSON, Njord keeps the deterministic review visible and reports
@@ -349,10 +351,12 @@ summaries, financial briefs, spending reviews, finance reviews, risk checks,
 configuration status, or follow-up questions. Type `exit` or `quit` to leave
 the session.
 
-Finance-oriented REPL interactions use the configured Mongoose LLM backend for
-read-only narration or structured finance-review judgment when a profile is
-available. Natural language routes through the same capability path used by
-automation.
+Finance-oriented REPL interactions select the relevant Njord capability,
+collect YNAB-backed metrics, and then use the configured Mongoose LLM backend
+to synthesize a ChatGPT-style response from those facts when a profile is
+available. If the LLM backend is missing or unreachable, Njord still shows the
+capability output and explains the missing synthesis step. One-shot commands
+remain available for automation and explicit capability testing.
 
 For scripts, tests, and Mongoose dispatch, one-shot commands remain available:
 
