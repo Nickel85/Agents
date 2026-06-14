@@ -183,6 +183,37 @@ The build currently uses `gcc` on Windows.
 
 GitHub Actions also builds `mongoose.exe` for pull requests targeting `main`, pushes to `main`, and version tags. PR builds upload the executable as an Actions artifact. Tag builds attach it to the GitHub Release.
 
+## Source-Backed Development Environment
+
+Use the development environment when testing current source changes while
+keeping the installed release available:
+
+```powershell
+.\dev\setup-dev-env.ps1
+$env:Path = "$PWD\.dev-bin;$env:Path"
+mongoose-dev --version
+mongoose-dev install Njord
+Njord-dev
+```
+
+This creates repo-local shims and state:
+
+```text
+.dev-bin\mongoose-dev.cmd
+.dev-bin\Njord-dev.cmd
+.dev-localappdata\Agents\
+```
+
+`mongoose-dev` runs `mongoose\mongoose.py` from the current checkout, and
+`Njord-dev` runs `agents\njord\agent.py` from the current checkout. No release
+build or reinstall is needed after editing source files.
+
+Reset the dev state:
+
+```powershell
+.\dev\setup-dev-env.ps1 -Reset
+```
+
 ## Install Mongoose
 
 From the repository root:

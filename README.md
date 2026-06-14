@@ -155,6 +155,21 @@ Build and install it from the repository root:
 .\install-mongoose.cmd
 ```
 
+For development, use the source-backed test environment instead of replacing
+your normal installed `mongoose` release:
+
+```powershell
+.\dev\setup-dev-env.ps1
+$env:Path = "$PWD\.dev-bin;$env:Path"
+mongoose-dev --version
+mongoose-dev install Njord
+Njord-dev
+```
+
+`mongoose-dev` and `Njord-dev` use the current checkout every time and keep
+their state under `.dev-localappdata`. Your normal `%LOCALAPPDATA%\Agents`
+install and `mongoose` command are unchanged. See [dev/README.md](dev/README.md).
+
 Then use:
 
 ```powershell
@@ -300,6 +315,8 @@ commercialize, license, sell, transfer, or otherwise monetize this project.
 - `mongoose/`: Mongoose runtime CLI and launcher source.
 - `docs/`: Runtime, architecture, release scope, and project planning guidance.
 - `build-mongoose.cmd`: Builds `dist/mongoose.exe`.
+- `dev/`: Source-backed local development environment for testing current repo
+  code without replacing the installed release.
 - `install-mongoose.cmd`: Installs `mongoose.exe` as a user-local CLI.
 - `tests/`: Local validation scripts also used by GitHub Actions.
 - `agents/_template/`: Starter template for a new agent.

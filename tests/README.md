@@ -529,4 +529,26 @@ This test verifies the built executable can:
 
 The test uses `.test-localappdata-mongoose-exe/`, `.test-mongoose-update-registry/`, and `.test-mongoose-registry-only-update/` as temporary folders. All are ignored by Git.
 
+## Dev Environment Validation
+
+Script:
+
+```text
+tests/dev-environment-validation.ps1
+```
+
+Run locally from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tests\dev-environment-validation.ps1
+```
+
+This test verifies the source-backed development environment can:
+
+- create `.dev-bin\mongoose-dev.cmd` and `.dev-bin\Njord-dev.cmd`.
+- keep state under `.dev-localappdata` instead of the normal install.
+- run `mongoose-dev --version`.
+- discover Njord from the current checkout.
+- open the `Njord-dev` REPL.
+
 

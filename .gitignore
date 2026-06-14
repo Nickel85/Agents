@@ -8,6 +8,8 @@ __pycache__/
 *.py[cod]
 
 # Test artifacts
+.dev-bin/
+.dev-localappdata/
 .test-localappdata/
 .test-localappdata-mongoose/
 .test-localappdata-mongoose-state/
