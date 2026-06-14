@@ -17,7 +17,7 @@ from config import ConfigFileError, config_status_lines, current_config_snapshot
 from finance_review import load_finance_review
 from llm_runtime import narrate_finance_response, synthesize_chat_response
 from router import route_request
-from session import run_repl
+from session import ResponseEvent, run_repl
 from terminal import should_use_color, style_output
 from ynab_api import YnabClient, choose_plan
 
@@ -306,6 +306,70 @@ def answer_chat_request(request: str) -> tuple[bool, str]:
     )
 
 
+def answer_chat_events(request: str):
+    yield ResponseEvent("status", "Reading your request...")
+    route = route_request(request)
+    yield ResponseEvent("status", f"Selected capability: {route.capability}")
+    yield ResponseEvent("status", f"Routing reason: {route.reason}")
+    yield ResponseEvent("status", "Running deterministic finance checks...")
+    ok, output = run_routed_capability(route.capability, request)
+
+    if not ok and output.startswith("I do not know"):
+        yield ResponseEvent("error", output)
+        yield ResponseEvent("done")
+        return
+
+    if route.capability == "config-status":
+        yield ResponseEvent("status", "Rendering configuration status without LLM synthesis.")
+        yield ResponseEvent(
+            "text",
+            chat_fallback_response(
+                request=request,
+                capability=route.capability,
+                reason=route.reason,
+                deterministic_output=output,
+                diagnostic="Configuration status is deterministic and does not need LLM synthesis.",
+            ),
+        )
+        yield ResponseEvent("done")
+        return
+
+    if route.capability == "hello-world":
+        yield ResponseEvent("status", "Rendering deterministic response.")
+        yield ResponseEvent("text" if ok else "error", output)
+        yield ResponseEvent("done")
+        return
+
+    yield ResponseEvent("status", "Preparing safe read-only facts for the LLM...")
+    yield ResponseEvent("status", "Asking the configured LLM to synthesize a conversational response...")
+    chat = synthesize_chat_response(
+        request=request,
+        capability=route.capability,
+        deterministic_output=output,
+    )
+    if chat.ok:
+        profile = f" ({chat.profile})" if chat.profile else ""
+        yield ResponseEvent("status", f"LLM response received{profile}.")
+        yield ResponseEvent("text", f"{chat.text}\n\nLLM profile{profile}")
+        yield ResponseEvent("done")
+        return
+
+    if chat.diagnostic:
+        yield ResponseEvent("warning", f"LLM synthesis unavailable: {chat.diagnostic}")
+    yield ResponseEvent("status", "Falling back to deterministic finance output.")
+    yield ResponseEvent(
+        "text" if ok else "error",
+        chat_fallback_response(
+            request=request,
+            capability=route.capability,
+            reason=route.reason,
+            deterministic_output=output,
+            diagnostic=chat.diagnostic,
+        ),
+    )
+    yield ResponseEvent("done")
+
+
 def chat_fallback_response(
     *,
     request: str,
@@ -454,7 +518,7 @@ def main() -> None:
                 input_stream=sys.stdin,
                 output_stream=sys.stdout,
                 color_enabled=color_enabled,
-                answer_request=answer_chat_request,
+                answer_events=answer_chat_events,
             )
         )
 

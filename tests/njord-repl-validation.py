@@ -76,6 +76,17 @@ def run_session(script: str, answer=None) -> tuple[int, str, list[str]]:
     return code, output.getvalue(), calls
 
 
+def run_event_session(script: str, answer_events) -> tuple[int, str]:
+    output = io.StringIO()
+    code = run_repl(
+        input_stream=io.StringIO(script),
+        output_stream=output,
+        color_enabled=False,
+        answer_events=answer_events,
+    )
+    return code, output.getvalue()
+
+
 for exit_command in ("exit", "quit"):
     exit_code, output, routed = run_session(f"{exit_command}\n")
     assert_true(exit_code == 0, f"{exit_command} did not exit cleanly.")
@@ -112,6 +123,27 @@ exit_code, output, routed = run_session("summarize my current budget\nexit\n")
 assert_true(exit_code == 0, "Natural-language session did not exit cleanly.")
 assert_true(routed == ["summarize my current budget"], "Natural-language prompt was not routed exactly once.")
 assert_true("routed: summarize my current budget" in output, "Natural-language response was not rendered.")
+
+
+def fixture_answer_events(request: str):
+    yield ResponseEvent("status", f"Routing request: {request}")
+    yield ResponseEvent("status", "Running deterministic finance checks...")
+    yield ResponseEvent("status", "Asking the configured LLM to synthesize a conversational response...")
+    yield ResponseEvent("text", "final answer")
+    yield ResponseEvent("done")
+
+
+exit_code, output = run_event_session("summarize my current budget\nexit\n", fixture_answer_events)
+assert_true(exit_code == 0, "Event-driven session did not exit cleanly.")
+assert_true(
+    output.index("Routing request: summarize my current budget") < output.index("final answer"),
+    "Event-driven session did not render progress before the final answer.",
+)
+for phrase in (
+    "Running deterministic finance checks...",
+    "Asking the configured LLM to synthesize a conversational response...",
+):
+    assert_true(phrase in output, f"{phrase} was missing from event-driven REPL output.")
 
 should_exit, events = handle_input(
     "/missing",
@@ -181,18 +213,29 @@ try:
     assert_true("LLM profile (fake-main)" in chat_answer, "Chat finance review did not label the configured LLM profile.")
     assert_true("Capability: finance-review" not in chat_answer, "Chat finance review exposed command-style capability metadata.")
 
+    chat_events = list(njord_agent.answer_chat_events("review my finances"))
+    event_text = "\n".join(event.text for event in chat_events)
+    assert_true([event.kind for event in chat_events[:5]] == ["status", "status", "status", "status", "status"], "Chat events did not start with progress status.")
+    assert_true("Selected capability: finance-review" in event_text, "Chat events did not show selected capability.")
+    assert_true("Running deterministic finance checks..." in event_text, "Chat events did not show deterministic work.")
+    assert_true("Asking the configured LLM" in event_text, "Chat events did not show LLM synthesis work.")
+    assert_true("LLM response received (fake-main)." in event_text, "Chat events did not show LLM completion.")
+    assert_true(chat_events[-1].kind == "done", "Chat events did not end with done.")
+
     output = io.StringIO()
     repl_code = run_repl(
         input_stream=io.StringIO("review my finances\nexit\n"),
         output_stream=output,
         color_enabled=False,
-        answer_request=njord_agent.answer_chat_request,
+        answer_events=njord_agent.answer_chat_events,
     )
     assert_true(repl_code == 0, "LLM-backed conversational REPL session did not exit cleanly.")
     repl_output = output.getvalue()
     assert_true("Fake LLM narration" in repl_output, "REPL conversation did not use the configured LLM backend.")
     assert_true("LLM profile (fake-main)" in repl_output, "REPL conversation did not label the configured LLM profile.")
     assert_true("Capability: finance-review" not in repl_output, "REPL conversation exposed command-style capability metadata.")
+    assert_true("Selected capability: finance-review" in repl_output, "REPL conversation did not show routing progress.")
+    assert_true("Asking the configured LLM" in repl_output, "REPL conversation did not show LLM progress.")
 finally:
     njord_agent.run_ynab_budget_summary = original_summary
     njord_agent.run_finance_review_for_request = original_finance_review

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Callable, TextIO
 
@@ -9,6 +10,7 @@ from terminal import style_output, styled
 
 
 AnswerCall = Callable[[str], tuple[bool, str]]
+AnswerEventsCall = Callable[[str], Iterable["ResponseEvent"]]
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,7 @@ class ResponseEvent:
 RESPONSE_EVENT_KINDS = {
     "text",
     "text_delta",
+    "status",
     "warning",
     "error",
     "prompt",
@@ -96,6 +99,30 @@ def handle_input(
     return False, response_events(*answer_request(request))
 
 
+def handle_builtin_input(raw_input: str) -> tuple[bool, list[ResponseEvent], bool]:
+    request = raw_input.strip()
+    if not request:
+        return False, [], True
+
+    normalized = request.lower()
+    if normalized in EXIT_COMMANDS:
+        return True, [ResponseEvent("done")], True
+
+    if normalized in {"help", "what can you do", "what can you do?"}:
+        return False, [ResponseEvent("text", help_text()), ResponseEvent("done")], True
+
+    if request.startswith("/"):
+        return False, [
+            ResponseEvent(
+                "warning",
+                "Njord sessions are conversational now. Ask naturally, for example: Review my finances.",
+            ),
+            ResponseEvent("done"),
+        ], True
+
+    return False, [], False
+
+
 def render_event(event: ResponseEvent, *, color_enabled: bool, output_stream: TextIO) -> None:
     if event.kind not in RESPONSE_EVENT_KINDS:
         raise ValueError(f"Unknown response event kind: {event.kind}")
@@ -114,7 +141,9 @@ def render_event(event: ResponseEvent, *, color_enabled: bool, output_stream: Te
         output_stream.flush()
         return
 
-    if event.kind == "warning":
+    if event.kind == "status":
+        rendered = styled(event.text, "muted", color_enabled)
+    elif event.kind == "warning":
         rendered = styled(event.text, "warning", color_enabled)
     elif event.kind == "error":
         rendered = styled(style_output(event.text, color_enabled), "error", color_enabled)
@@ -123,6 +152,7 @@ def render_event(event: ResponseEvent, *, color_enabled: bool, output_stream: Te
     else:
         rendered = style_output(event.text, color_enabled)
     output_stream.write(f"{rendered}\n")
+    output_stream.flush()
 
 
 def run_repl(
@@ -130,8 +160,12 @@ def run_repl(
     input_stream: TextIO,
     output_stream: TextIO,
     color_enabled: bool,
-    answer_request: AnswerCall,
+    answer_request: AnswerCall | None = None,
+    answer_events: AnswerEventsCall | None = None,
 ) -> int:
+    if answer_request is None and answer_events is None:
+        raise ValueError("run_repl requires answer_request or answer_events.")
+
     while True:
         render_event(ResponseEvent("prompt", PROMPT), color_enabled=color_enabled, output_stream=output_stream)
         raw_input = input_stream.readline()
@@ -139,10 +173,18 @@ def run_repl(
             output_stream.write("\n")
             return 0
 
-        should_exit, events = handle_input(
-            raw_input,
-            answer_request=answer_request,
-        )
+        should_exit, events, handled = handle_builtin_input(raw_input)
+        if not handled:
+            request = raw_input.strip()
+            if answer_events is not None:
+                for event in answer_events(request):
+                    render_event(event, color_enabled=color_enabled, output_stream=output_stream)
+                continue
+            assert answer_request is not None
+            should_exit, events = handle_input(
+                raw_input,
+                answer_request=answer_request,
+            )
         for event in events:
             render_event(event, color_enabled=color_enabled, output_stream=output_stream)
         if should_exit:
