@@ -155,6 +155,25 @@ This test verifies:
 
 The test uses `.test-localappdata-mongoose/` as a temporary local AppData substitute. That folder is ignored by Git.
 
+## Njord LLM Runtime Validation
+
+Script:
+
+```text
+tests/njord-llm-runtime-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\njord-llm-runtime-validation.py
+```
+
+This test verifies:
+
+- LLM prompts with non-CP1252 characters are passed to child processes as UTF-8.
+- slow LLM invocations return diagnostics instead of crashing the REPL.
+
 ## Mongoose State Validation
 
 Script:

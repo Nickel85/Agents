@@ -48,3 +48,11 @@ jobs:
       - name: Validate Njord snapshot model
         shell: pwsh
         run: python ./tests/njord-snapshot-validation.py
+
+      - name: Validate Njord LLM runtime
+        shell: pwsh
+        run: python ./tests/njord-llm-runtime-validation.py
+
+      - name: Validate Njord REPL
+        shell: pwsh
+        run: python ./tests/njord-repl-validation.py

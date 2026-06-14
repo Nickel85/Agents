@@ -6,7 +6,6 @@ import json
 import os
 import shlex
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from fact_packet import FinanceFactPacket
 
 
 MAX_CONTEXT_CHARS = 5000
+DEFAULT_LLM_TIMEOUT_SECONDS = 45.0
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,39 @@ def _fallback_invoke_command() -> list[str]:
 
 def llm_invoke_command() -> list[str]:
     return _invoke_command_from_context() or _fallback_invoke_command()
+
+
+def llm_timeout_seconds() -> float:
+    raw_timeout = os.environ.get("NJORD_LLM_TIMEOUT_SECONDS", "").strip()
+    if not raw_timeout:
+        return DEFAULT_LLM_TIMEOUT_SECONDS
+    try:
+        return max(float(raw_timeout), 0.1)
+    except ValueError:
+        return DEFAULT_LLM_TIMEOUT_SECONDS
+
+
+def run_llm_invoke(command: list[str], *, prompt: str, system_prompt: str) -> tuple[bool, str, str]:
+    timeout = llm_timeout_seconds()
+    try:
+        completed = subprocess.run(
+            [*command, "--system", system_prompt],
+            input=prompt,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+        )
+    except subprocess.TimeoutExpired:
+        return False, "", f"Mongoose LLM invocation timed out after {timeout:g} seconds."
+    except OSError as exc:
+        return False, "", f"Mongoose LLM invocation could not start: {exc}"
+    except UnicodeError as exc:
+        return False, "", f"Mongoose LLM invocation failed while encoding text: {exc}"
+    return True, completed.stdout.strip(), completed.stderr.strip()
 
 
 def redact_for_prompt(text: str) -> str:
@@ -184,17 +217,11 @@ def narrate_finance_response(*, request: str, capability: str, deterministic_out
         "You narrate read-only finance analysis from deterministic facts. "
         "Keep generated text separate from facts and never propose unapproved writes."
     )
-    completed = subprocess.run(
-        [*command, "--system", system_prompt],
-        input=prompt,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=45,
-    )
-    output = completed.stdout.strip()
+    invoked, output, diagnostic_output = run_llm_invoke(command, prompt=prompt, system_prompt=system_prompt)
+    if not invoked:
+        return LlmNarration(False, diagnostic=diagnostic_output)
     if not output:
-        diagnostic = completed.stderr.strip() or "Mongoose LLM invocation returned no output."
+        diagnostic = diagnostic_output or "Mongoose LLM invocation returned no output."
         return LlmNarration(False, diagnostic=diagnostic)
     try:
         payload = json.loads(output)
@@ -229,17 +256,11 @@ def synthesize_chat_response(*, request: str, capability: str, deterministic_out
         "You are an interactive read-only finance assistant. "
         "Use capability facts and metrics only; never invent data or claim writes."
     )
-    completed = subprocess.run(
-        [*command, "--system", system_prompt],
-        input=prompt,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=45,
-    )
-    output = completed.stdout.strip()
+    invoked, output, diagnostic_output = run_llm_invoke(command, prompt=prompt, system_prompt=system_prompt)
+    if not invoked:
+        return LlmNarration(False, diagnostic=diagnostic_output)
     if not output:
-        diagnostic = completed.stderr.strip() or "Mongoose LLM invocation returned no output."
+        diagnostic = diagnostic_output or "Mongoose LLM invocation returned no output."
         return LlmNarration(False, diagnostic=diagnostic)
     try:
         payload = json.loads(output)
@@ -270,17 +291,11 @@ def invoke_finance_decision(*, request: str, fact_packet: FinanceFactPacket) -> 
         "You produce strict JSON finance decisions from validated deterministic facts. "
         "Return only JSON and never claim that state changed."
     )
-    completed = subprocess.run(
-        [*command, "--system", system_prompt],
-        input=prompt,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=45,
-    )
-    output = completed.stdout.strip()
+    invoked, output, diagnostic_output = run_llm_invoke(command, prompt=prompt, system_prompt=system_prompt)
+    if not invoked:
+        return LlmDecisionResult(False, diagnostic=diagnostic_output)
     if not output:
-        diagnostic = completed.stderr.strip() or "Mongoose LLM invocation returned no output."
+        diagnostic = diagnostic_output or "Mongoose LLM invocation returned no output."
         return LlmDecisionResult(False, diagnostic=diagnostic)
     outer_payload = parse_json_object(output)
     if outer_payload is None:
