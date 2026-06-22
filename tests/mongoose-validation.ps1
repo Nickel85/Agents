@@ -312,7 +312,7 @@ Assert-True ($llmHelp.Output -match "advanced manual setup") "mongoose llm --hel
 
 $version = Invoke-Mongoose -Arguments @("--version")
 Assert-True ($version.ExitCode -eq 0) "mongoose --version failed. Output: $($version.Output)"
-Assert-True ($version.Output -match "mongoose 0.8.0") "mongoose --version did not report expected version."
+Assert-True ($version.Output -match "mongoose 0.9.0") "mongoose --version did not report expected version."
 Assert-True ($version.Output -match "development") "mongoose --version did not report development release kind."
 
 $state = Invoke-Mongoose -Arguments @("state", "--init", "--json")
@@ -321,7 +321,7 @@ $statePaths = $state.Output | ConvertFrom-Json
 Assert-True (Test-Path $statePaths.state) "mongoose state did not create the shared state directory."
 Assert-True (Test-Path $statePaths.logs) "mongoose state did not create the log directory."
 Assert-True (Test-Path $statePaths.jobs) "mongoose state did not create the jobs directory."
-Assert-True ($statePaths.version -eq "0.8.0") "mongoose state did not report CLI version."
+Assert-True ($statePaths.version -eq "0.9.0") "mongoose state did not report CLI version."
 Assert-True ($statePaths.releaseKind -eq "development") "mongoose state did not report development release kind."
 Assert-True ($statePaths.releaseTag -eq "") "mongoose state should not report a release tag for development builds."
 Assert-True ($statePaths.cliSource -match "mongoose.py") "mongoose state did not report CLI source."
@@ -435,6 +435,10 @@ $installedList = Invoke-Mongoose -Arguments @("list", "--installed")
 Assert-True ($installedList.ExitCode -eq 0) "mongoose list --installed failed. Output: $($installedList.Output)"
 Assert-True ($installedList.Output -match "Njord") "mongoose list --installed did not include Njord."
 
+$configStatusDryRun = Invoke-Mongoose -Arguments @("route", "--task-type", "credential-status", "--dry-run", "config", "status")
+Assert-True ($configStatusDryRun.ExitCode -eq 0) "Njord config-status dry-run should not require YNAB configuration. Output: $($configStatusDryRun.Output)"
+Assert-True ($configStatusDryRun.Output -match "Selected: Njord::config-status") "Njord config-status route did not select the config capability."
+
 $uninstall = Invoke-Mongoose -Arguments @("uninstall", "Njord")
 Assert-True ($uninstall.ExitCode -eq 0) "mongoose uninstall Njord failed. Output: $($uninstall.Output)"
 Assert-True (-not (Test-Path $launcherPath)) "mongoose uninstall did not remove Njord launcher."
@@ -519,6 +523,7 @@ Assert-True ($llmRoute.Output -match "mongoose.provider_unavailable") "LLM-requi
 $llmReadyRoute = Invoke-Mongoose -Arguments @("route", "--task-type", "llm-ready", "hello")
 Assert-True ($llmReadyRoute.ExitCode -eq 0) "mongoose route did not run an LLM-required capability with a configured fake profile. Output: $($llmReadyRoute.Output)"
 Assert-True ($llmReadyRoute.Output -match "Selected: Alpha::llm-ready") "mongoose route did not select the llm-ready capability."
+Assert-True ($llmReadyRoute.Output -match "Selector: LLM \(fake-main\)") "mongoose route did not report configured LLM capability selection."
 Assert-True ($llmReadyRoute.Output -match "ARGS=llm-ready\|hello") "mongoose route did not pass llm-ready capability arguments."
 Assert-True ($llmReadyRoute.Output -match "CTX_LLM_PROVIDER=mongoose.llm.v1") "runtime context did not expose the LLM provider interface."
 Assert-True ($llmReadyRoute.Output -match "CTX_LLM_AVAILABLE=True") "runtime context did not mark the fake LLM provider available."
@@ -550,18 +555,24 @@ Assert-True ($routeAlpha.Output -match "CTX_CONFIG_PROVIDER=mongoose.configurati
 $routeBeta = Invoke-Mongoose -Arguments @("route", "please", "build", "a", "summary")
 Assert-True ($routeBeta.ExitCode -eq 0) "mongoose route did not dispatch to Beta from natural-language request. Output: $($routeBeta.Output)"
 Assert-True ($routeBeta.Output -match "Selected: Beta::report") "mongoose route did not select Beta report."
+Assert-True ($routeBeta.Output -match "Selector: LLM \(fake-main\)") "natural-language route did not use the configured LLM selector."
 Assert-True ($routeBeta.Output -match "Beta fixture agent") "mongoose route did not execute Beta fixture."
 Assert-True ($routeBeta.Output -match "ARGS=report\|please\|build\|a\|summary") "mongoose route did not pass Beta capability arguments."
 
 $ambiguousRoute = Invoke-Mongoose -Arguments @("route", "--task-type", "test", "--dry-run")
-Assert-True ($ambiguousRoute.ExitCode -ne 0) "mongoose route unexpectedly resolved an ambiguous task type. Output: $($ambiguousRoute.Output)"
-Assert-True ($ambiguousRoute.Output -match "Ambiguous request") "ambiguous route output did not explain ambiguity."
-Assert-True ($ambiguousRoute.Output -match "Alpha::echo") "ambiguous route output did not include Alpha echo."
-Assert-True ($ambiguousRoute.Output -match "Beta::echo") "ambiguous route output did not include Beta echo."
+Assert-True ($ambiguousRoute.ExitCode -eq 0) "configured LLM selector did not resolve an ambiguous task type. Output: $($ambiguousRoute.Output)"
+Assert-True ($ambiguousRoute.Output -match "Selected: Alpha::echo") "configured LLM selector did not choose an installed ambiguous capability."
+Assert-True ($ambiguousRoute.Output -match "Selector: LLM \(fake-main\)") "ambiguous route did not report configured LLM selection."
 
 $missingRoute = Invoke-Mongoose -Arguments @("route", "--task-type", "definitely-missing")
 Assert-True ($missingRoute.ExitCode -ne 0) "mongoose route unexpectedly resolved unsupported task type. Output: $($missingRoute.Output)"
 Assert-True ($missingRoute.Output -match "No installed capability can handle") "unsupported route output did not explain the failure."
+
+$missingToolRoute = Invoke-Mongoose -Arguments @("route", "weather", "in", "Boston")
+Assert-True ($missingToolRoute.ExitCode -ne 0) "mongoose route unexpectedly ran a missing weather tool. Output: $($missingToolRoute.Output)"
+Assert-True ($missingToolRoute.Output -match "Suggested capability or tool to add") "missing tool route did not include an LLM-suggested tool section."
+Assert-True ($missingToolRoute.Output -match "Name: weather-lookup") "missing tool route did not propose the weather lookup capability."
+Assert-True ($missingToolRoute.Output -match "LLM selector: fake-main") "missing tool proposal did not identify the configured LLM selector."
 
 $runAlpha = Invoke-Mongoose -Arguments @("run", "Alpha", "echo", "hello")
 Assert-True ($runAlpha.ExitCode -eq 0) "mongoose run Alpha failed. Output: $($runAlpha.Output)"

@@ -189,7 +189,17 @@ assert_true(
     "Invalid decision did not report write/balance safety failure.",
 )
 
-review = build_finance_review_from_snapshot(snapshot)
+captured_memory_records: list[dict] = []
+
+
+def capture_memory(record):
+    captured_memory_records.append(record)
+    stored = dict(record)
+    stored["recordId"] = "memory-fixture-1"
+    return True, stored, ""
+
+
+review = build_finance_review_from_snapshot(snapshot, memory_appender=capture_memory)
 assert_true(review.ok, "Fixture finance review did not succeed.")
 assert_true("Njord finance review" in review.output, "Finance review missing heading.")
 assert_true("Cash Flow Forecasting" in review.output, "Finance review missing cash-flow loop.")
@@ -199,6 +209,32 @@ assert_true("LLM decision validation" in review.output, "Finance review missing 
 assert_true("LLM decision unavailable" in review.output, "Finance review should explain missing LLM backend.")
 assert_true("read-only" in review.output, "Finance review missing read-only guardrail.")
 assert_true("write to YNAB" not in review.output, "Finance review should not claim write execution.")
+assert_true(review.memory_status == "stored", "Finance review did not report stored memory status.")
+assert_true(review.memory_record is not None, "Finance review did not keep stored memory metadata.")
+assert_true(review.memory_record["recordId"] == "memory-fixture-1", "Stored memory metadata was not returned.")
+assert_true(len(captured_memory_records) == 1, "Finance review did not append exactly one memory record.")
+audit_record = captured_memory_records[0]
+assert_true(audit_record["recordType"] == "loop_aware_memory_record", "Audit record type changed.")
+assert_true(audit_record["agentId"] == "Njord", "Audit record lost agent identity.")
+assert_true(audit_record["capabilityId"] == "finance-review", "Audit record lost capability identity.")
+assert_true(audit_record["goal"]["request"] == "Review my finances.", "Audit record lost the request.")
+assert_true(audit_record["loop"]["definitionIds"] == ["cash-flow-forecasting", "financial-risk"], "Audit record lost loop ids.")
+assert_true(audit_record["facts"]["replaySafe"] is True, "Audit record is not replay-safe.")
+assert_true(len(audit_record["facts"]["factPackets"]) == 2, "Audit record did not include fact packet summaries.")
+assert_true(audit_record["validation"]["fallbackValidation"], "Audit record missing fallback validation summary.")
+assert_true(audit_record["userDecision"]["status"] == "informational", "Read-only review should be informational.")
+assert_true(audit_record["outcome"]["status"] == "completed", "Audit record outcome should be completed.")
+assert_true(audit_record["redaction"]["secretsRemoved"] is True, "Audit record missing redaction marker.")
+event_kinds = {event["eventKind"] for event in audit_record["events"]}
+for expected_event in {
+    "started",
+    "state_read",
+    "fact_found",
+    "decision_made",
+    "validation_failed",
+    "completed",
+}:
+    assert_true(expected_event in event_kinds, f"Audit record missing event {expected_event}.")
 
 
 def structured_backend(*, request, fact_packet):
@@ -223,6 +259,7 @@ llm_review = build_finance_review_from_snapshot(
     snapshot,
     request="review my finances",
     decision_backend=structured_backend,
+    memory_appender=capture_memory,
 )
 assert_true("LLM decision (fixture-llm)" in llm_review.output, "Finance review did not render LLM decision profile.")
 assert_true(
@@ -230,5 +267,11 @@ assert_true(
     "Finance review did not render structured LLM recommendation.",
 )
 assert_true("LLM decision contract valid" in llm_review.output, "Finance review did not validate LLM decision.")
+llm_audit_record = llm_review.audit_record or {}
+assert_true(llm_audit_record["decision"]["source"] == "llm", "LLM audit record did not record LLM source.")
+assert_true(llm_audit_record["decision"]["confidence"] == 0.72, "LLM audit record lost confidence.")
+assert_true(llm_audit_record["validation"]["status"] == "valid", "LLM audit record did not record valid status.")
+llm_event_kinds = {event["eventKind"] for event in llm_audit_record["events"]}
+assert_true("validation_passed" in llm_event_kinds, "LLM audit record missing validation_passed event.")
 
 print("Njord AI loop validation passed.")

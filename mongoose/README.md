@@ -426,6 +426,7 @@ The shared layout is:
     config\            Non-secret shared configuration
     agents\            Installed agent metadata and agent-scoped local state
     jobs\              Job records from mongoose run and route executions
+    memory\            Redacted local JSONL memory records for loop-aware capabilities
     runtime\           Runtime context files and runtime foundation status
   logs\                JSONL logs
 ```
@@ -443,6 +444,23 @@ mongoose jobs list
 mongoose jobs show <job-id>
 mongoose jobs cancel <job-id>
 ```
+
+Loop-aware capabilities can append redacted local memory records and query them
+later:
+
+```powershell
+mongoose memory append --record-json '{ "recordType": "loop_aware_memory_record", "agentId": "Njord" }'
+mongoose memory list --record-type loop_aware_memory_record
+mongoose memory context --agent Njord --subject "emergency fund" --json
+mongoose memory show <record-id>
+```
+
+The memory provider is exposed to agents through Runtime Contract v1 as
+`mongoose.memory.v1`. It is a small local record store for useful decisions,
+state summaries, and outcomes. The `memory context` surface returns compact
+prompt-ready summaries with provenance, redaction, and informational-only
+guardrails; it cannot approve actions or mutate state. The full shared Loop
+Runtime and Execution Traces remain later roadmap milestones.
 
 The v0.6 runtime foundation records local runtime state for observability. It is
 not a full background scheduler daemon yet:

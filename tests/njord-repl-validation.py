@@ -205,6 +205,7 @@ try:
     ok, review_answer = njord_agent.answer_request("review my finances")
     assert_true(ok, "Njord finance review answer did not succeed with fixture review.")
     assert_true("Capability: finance-review" in review_answer, "Finance review request did not route to finance-review.")
+    assert_true("Reason: Selected by the fake configured LLM for validation." in review_answer, "Finance review request did not use configured LLM selection.")
     assert_true("LLM narration (fake-main)" in review_answer, "Finance review answer did not use configured LLM narration.")
 
     ok, chat_answer = njord_agent.answer_chat_request("review my finances")
@@ -217,6 +218,7 @@ try:
     event_text = "\n".join(event.text for event in chat_events)
     assert_true([event.kind for event in chat_events[:5]] == ["status", "status", "status", "status", "status"], "Chat events did not start with progress status.")
     assert_true("Selected capability: finance-review" in event_text, "Chat events did not show selected capability.")
+    assert_true("Routing reason: Selected by the fake configured LLM for validation." in event_text, "Chat events did not show configured LLM selection reason.")
     assert_true("Running deterministic finance checks..." in event_text, "Chat events did not show deterministic work.")
     assert_true("Asking the configured LLM" in event_text, "Chat events did not show LLM synthesis work.")
     assert_true("LLM response received (fake-main)." in event_text, "Chat events did not show LLM completion.")

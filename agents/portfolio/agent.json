@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "portfolio",
+  "commandName": "Portfolio",
+  "displayName": "Portfolio",
+  "version": "0.1.0",
+  "entrypointPath": "agent.py",
+  "entrypoints": {
+    "default": "agent.py"
+  },
+  "example": "review-thesis ai-infrastructure",
+  "description": "Investment thesis research agent that tracks durable thesis history, positions, evidence, and review prompts.",
+  "taskTypes": [
+    "portfolio",
+    "investment",
+    "thesis",
+    "research"
+  ],
+  "requires": {
+    "memory": {
+      "mode": "optional"
+    },
+    "storage": {
+      "mode": "optional"
+    }
+  },
+  "llm": {
+    "mode": "none",
+    "deterministicFallback": "Portfolio thesis management is deterministic in v0.9 and does not require an LLM."
+  },
+  "capabilities": [
+    {
+      "name": "thesis",
+      "displayName": "Thesis Management",
+      "description": "Create, update, archive, inspect, and review durable investment theses with positions and evidence.",
+      "entrypointPath": "agent.py",
+      "taskTypes": [
+        "portfolio",
+        "investment-thesis",
+        "thesis",
+        "research-review",
+        "memory"
+      ],
+      "requires": {
+        "memory": {
+          "mode": "optional"
+        },
+        "storage": {
+          "mode": "optional"
+        }
+      },
+      "llm": {
+        "mode": "none",
+        "deterministicFallback": "Thesis management stores and reviews structured research records deterministically."
+      }
+    }
+  ]
+}

@@ -56,16 +56,23 @@ Available v1 providers:
 - `state`: `mongoose.state.v1`; exposes the shared Mongoose state root path.
 - `storage`: `mongoose.storage.local.v1`; exposes an agent/capability-scoped
   local storage path.
-
-Reserved v1 descriptors:
-
-- `memory`: `mongoose.memory.v1`; unavailable until durable memory is added.
-- `tools`: `mongoose.tools.v1`; unavailable until tool invocation is added.
-- `apiProfiles`: `mongoose.api-profiles.v1`; unavailable until profile
-  resolution is added.
+- `memory`: `mongoose.memory.v1`; exposes a redacted local JSONL memory record
+  store plus append/list/context commands. The `contextCommand` returns compact
+  `mongoose.prompt-context.v1` summaries with source record ids, timestamps,
+  confidence, outcomes, user-decision markers, redaction, and explicit
+  informational-only guardrails. v0.9 memory records are intentionally
+  lightweight so loop-aware capabilities can persist useful decisions, state
+  summaries, and outcomes before the full Loop Runtime and Execution Traces
+  milestones.
 - `llm`: `mongoose.llm.v1`; available when a compatible profile is configured.
   Exposes non-secret profile metadata and an `invokeCommand` that agents can run
   with prompt text on stdin to receive JSON output from the configured provider.
+
+Reserved v1 descriptors:
+
+- `tools`: `mongoose.tools.v1`; unavailable until tool invocation is added.
+- `apiProfiles`: `mongoose.api-profiles.v1`; unavailable until profile
+  resolution is added.
 
 Deterministic agents can use the `storage`, `state`, and `logs` descriptors
 without requiring an LLM.
@@ -91,7 +98,7 @@ Supported requirement names:
 - `execution`
 
 Runtime Contract v1 currently supports required `configuration`, `logs`,
-`state`, `storage`, and `llm` providers. Required `memory`, `tools`,
+`state`, `storage`, `memory`, and `llm` providers. Required `tools`,
 `apiProfiles`, `apis`, and `models` requirements fail validation until those
 providers exist. Optional declarations are allowed so agents can describe future
 or fallback behavior.

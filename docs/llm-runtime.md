@@ -143,6 +143,21 @@ and passing prompt text on stdin. The command returns JSON:
 }
 ```
 
+## Capability Selection
+
+`mongoose route` uses the configured default LLM profile for capability selection
+when one is available. Mongoose sends the user request, any task-type hint, and
+the installed capability metadata to the LLM. The LLM must either select an
+installed capability or propose a missing capability/tool to add. Mongoose
+validates LLM selections against the installed metadata before dispatching; if
+the LLM is unavailable, returns invalid JSON, or selects something that is not
+installed, routing falls back to deterministic metadata matching.
+
+Direct Njord natural-language routing follows the same pattern: it asks the
+configured Mongoose LLM invocation command to choose from Njord's installed
+capabilities, then falls back to its keyword router when selection is
+unavailable.
+
 For local validation, the `fake` provider returns deterministic narration and
 does not require network access or secrets:
 

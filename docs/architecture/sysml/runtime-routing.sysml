@@ -29,6 +29,9 @@ package MongooseRuntimeRouting {
     // branch taskTypes: cash-flow, finance, spending-review, transactions, ynab
     then Njord_ynab_spending_review_ReadYNAB : ReadExternalApi;
 
+    then Portfolio_thesis : DispatchCapability;
+    // branch taskTypes: investment-thesis, memory, portfolio, research-review, thesis
+
     then done;
   }
 }

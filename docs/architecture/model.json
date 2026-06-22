@@ -199,6 +199,72 @@
         "ynab"
       ],
       "version": "0.1.0"
+    },
+    {
+      "capabilities": [
+        {
+          "configuration": {
+            "optional": [],
+            "required": [],
+            "secretRefs": []
+          },
+          "description": "Create, update, archive, inspect, and review durable investment theses with positions and evidence.",
+          "displayName": "Thesis Management",
+          "entrypointPath": "agents/portfolio/agent.py",
+          "id": "thesis",
+          "llm": {
+            "deterministicFallback": "Thesis management stores and reviews structured research records deterministically.",
+            "mode": "none"
+          },
+          "name": "thesis",
+          "requires": {
+            "memory": {
+              "mode": "optional"
+            },
+            "storage": {
+              "mode": "optional"
+            }
+          },
+          "taskTypes": [
+            "investment-thesis",
+            "memory",
+            "portfolio",
+            "research-review",
+            "thesis"
+          ]
+        }
+      ],
+      "commandName": "Portfolio",
+      "configuration": {
+        "optional": [],
+        "required": [],
+        "secretRefs": []
+      },
+      "description": "Investment thesis research agent that tracks durable thesis history, positions, evidence, and review prompts.",
+      "displayName": "Portfolio",
+      "entrypointPath": "agents/portfolio/agent.py",
+      "id": "portfolio",
+      "llm": {
+        "deterministicFallback": "Portfolio thesis management is deterministic in v0.9 and does not require an LLM.",
+        "mode": "none"
+      },
+      "manifestId": "portfolio",
+      "manifestPath": "agents/portfolio/agent.json",
+      "requires": {
+        "memory": {
+          "mode": "optional"
+        },
+        "storage": {
+          "mode": "optional"
+        }
+      },
+      "taskTypes": [
+        "investment",
+        "portfolio",
+        "research",
+        "thesis"
+      ],
+      "version": "0.1.0"
     }
   ],
   "externalSystems": [
@@ -208,7 +274,7 @@
       "usedByTaskType": "ynab"
     }
   ],
-  "generatedBy": "mongoose 0.8.0",
+  "generatedBy": "mongoose 0.9.0",
   "providers": [
     {
       "interface": "environment and user-local config names",
@@ -236,9 +302,9 @@
       "status": "profile-management"
     },
     {
-      "interface": "runtime provider descriptor",
+      "interface": "redacted local JSONL memory records",
       "name": "memory",
-      "status": "planned"
+      "status": "implemented"
     },
     {
       "interface": "runtime provider descriptor",
@@ -265,7 +331,8 @@
   "schemaVersion": 1,
   "source": {
     "agentManifests": [
-      "agents/njord/agent.json"
+      "agents/njord/agent.json",
+      "agents/portfolio/agent.json"
     ],
     "manifestSchemaVersion": 1,
     "root": ".",

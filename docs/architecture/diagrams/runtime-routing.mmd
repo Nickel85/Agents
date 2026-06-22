@@ -15,3 +15,5 @@ flowchart TD
   dispatch_Njord_ynab_budget_summary --> ynab["YNAB API read-only"]
   select -->|"cash-flow, finance, spending-review, transactions, ynab"| dispatch_Njord_ynab_spending_review["Njord ynab-spending-review"]
   dispatch_Njord_ynab_spending_review --> ynab["YNAB API read-only"]
+  select -->|"investment-thesis, memory, portfolio, research-review, thesis"| dispatch_Portfolio_thesis["Portfolio thesis"]
+  dispatch_Portfolio_thesis --> local["Local deterministic execution"]

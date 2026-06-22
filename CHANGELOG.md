@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.9.0 - Shared Memory and Prompt Context
+
+Planned release type: minor.
+
+This release adds the second pre-v1 runtime pillar after interaction-first
+Njord: shared local memory and prompt-context retrieval for agents that need to
+remember prior decisions, preferences, evidence, experiments, and outcomes
+without gaining approval or write authority.
+
+### Added
+
+- Add the local `mongoose.memory.v1` provider with append, list, show, and
+  prompt-context commands.
+- Define the v0.9 `loop_aware_memory_record` contract, user-facing loop events,
+  and transient same-line `Thinking.`, `Thinking..`, `Thinking...` indicators.
+- Add prompt-context retrieval with provenance, confidence/outcome markers,
+  deterministic fallback, redaction, and informational-only guardrails.
+- Store Njord finance review audit summaries as loop-aware memory records
+  through the shared Mongoose memory provider.
+- Add the Portfolio reference agent for memory-backed investment thesis
+  management, including thesis records, position association, evidence storage,
+  deployed-capital review, and research-only guardrails.
+
+### Changed
+
+- Mark shared memory as an implemented Runtime Contract v1 provider while
+  leaving the full shared Loop Runtime, Execution Traces, and Loop Tuner for
+  later roadmap milestones.
+- Update architecture artifacts, runtime docs, and validation coverage for the
+  new memory and prompt-context surfaces.
+
+### Validation
+
+- Add validation for the memory provider, loop-aware memory contract, Njord
+  finance audit memory records, Portfolio thesis memory records, and prompt
+  context redaction/guardrails.
+
 ## v0.8.0 - Interactive Njord Finance Review Foundation
 
 Planned release type: minor.

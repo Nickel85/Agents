@@ -30,6 +30,7 @@ AGENT_STATE_ROOT = STATE_ROOT / "agents"
 NON_SECRET_CONFIG_ROOT = STATE_ROOT / "config"
 RUNTIME_ROOT = STATE_ROOT / "runtime"
 STORAGE_ROOT = STATE_ROOT / "storage"
+MEMORY_ROOT = STATE_ROOT / "memory"
 LLM_PROFILE_ROOT = STATE_ROOT / "llm"
 LLM_PROFILE_PATH = LLM_PROFILE_ROOT / "profiles.json"
 DEFAULT_REGISTRY_URL = "https://github.com/Nickel85/Mongoose.git"
@@ -44,7 +45,7 @@ DEFAULT_LOCAL_LLM_WARMUP_TIMEOUT_SECONDS = 300.0
 OLLAMA_WINDOWS_INSTALL_URL = "https://ollama.com/install.ps1"
 MONGOOSE_RELEASES_API_URL = "https://api.github.com/repos/Nickel85/Mongoose/releases"
 MONGOOSE_RELEASE_ASSET_NAME = "mongoose.exe"
-MONGOOSE_VERSION = "0.8.0"
+MONGOOSE_VERSION = "0.9.0"
 MONGOOSE_RELEASE_KIND = "development"
 MONGOOSE_RELEASE_TAG = ""
 # Increment only for breaking manifest contract changes. Additive optional metadata stays on the same version.
@@ -64,7 +65,7 @@ PROVIDER_REQUIREMENT_KEYS = {
     "llm",
     "execution",
 }
-AVAILABLE_RUNTIME_PROVIDERS = {"configuration", "logs", "state", "storage", "llm"}
+AVAILABLE_RUNTIME_PROVIDERS = {"configuration", "logs", "state", "storage", "memory", "llm"}
 REQUIREMENT_MODES = {"optional", "required"}
 LLM_PROVIDERS = {"openai", "anthropic", "local-http", "fake"}
 LLM_SECRET_MODES = {"env"}
@@ -79,6 +80,11 @@ SECRET_KEYWORDS = (
 SECRET_TEXT_PATTERN = re.compile(
     r"(?i)\b(access_token|api_key|authorization|password|secret|token)\s*[:=]\s*([^\s,;]+)"
 )
+POSTAL_ADDRESS_PATTERN = re.compile(
+    r"(?i)\b\d{1,6}\s+[A-Za-z0-9 .'-]+\s+(street|st\.?|avenue|ave\.?|road|rd\.?|"
+    r"drive|dr\.?|lane|ln\.?|boulevard|blvd\.?|court|ct\.?|place|pl\.?|way)\b"
+)
+EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 MANIFEST_SECRET_KEYS = {
     "access_token",
     "api_key",
@@ -220,6 +226,7 @@ def state_contract() -> dict[str, str]:
         "logs": str(LOG_ROOT),
         "runtime": str(RUNTIME_ROOT),
         "storage": str(STORAGE_ROOT),
+        "memory": str(MEMORY_ROOT),
         "llmProfiles": str(LLM_PROFILE_PATH),
     }
     return paths
@@ -238,6 +245,7 @@ def ensure_state_layout() -> dict[str, str]:
         "logs",
         "runtime",
         "storage",
+        "memory",
     }
     for key, value in paths.items():
         path = Path(value)
@@ -413,6 +421,39 @@ def redact_secrets(value: Any) -> Any:
 
 def redact_secret_text(message: str) -> str:
     return SECRET_TEXT_PATTERN.sub(lambda match: f"{match.group(1)}=[redacted]", message)
+
+
+def redact_prompt_context_text(message: str) -> str:
+    redacted = redact_secret_text(message)
+    redacted = POSTAL_ADDRESS_PATTERN.sub("[redacted-address]", redacted)
+    redacted = EMAIL_PATTERN.sub("[redacted-email]", redacted)
+    return redacted
+
+
+def redact_memory_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[redacted]" if is_secret_key(str(key)) else redact_memory_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_memory_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_secret_text(value)
+    return value
+
+
+def redact_prompt_context_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[redacted]" if is_secret_key(str(key)) or "address" in str(key).lower() else redact_prompt_context_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_prompt_context_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_prompt_context_text(value)
+    return value
 
 
 def append_log(component: str, message: str, level: str = "INFO", **metadata: Any) -> Path:
@@ -853,12 +894,24 @@ def unique_strings(values: list[str]) -> list[str]:
 
 def required_configuration_names(agent: dict[str, Any], capability: dict[str, Any]) -> list[str]:
     names: list[str] = []
-    names.extend(string_list(agent.get("requiredInputs", [])))
-    names.extend(string_list(capability.get("requiredInputs", [])))
+    capability_configuration = capability.get("configuration", {})
+    capability_declares_requirements = (
+        "requiredInputs" in capability
+        or (
+            isinstance(capability_configuration, dict)
+            and "required" in capability_configuration
+        )
+    )
 
-    for source in (agent.get("configuration", {}), capability.get("configuration", {})):
-        if isinstance(source, dict):
-            names.extend(string_list(source.get("required", [])))
+    if not capability_declares_requirements:
+        names.extend(string_list(agent.get("requiredInputs", [])))
+        agent_configuration = agent.get("configuration", {})
+        if isinstance(agent_configuration, dict):
+            names.extend(string_list(agent_configuration.get("required", [])))
+
+    names.extend(string_list(capability.get("requiredInputs", [])))
+    if isinstance(capability_configuration, dict):
+        names.extend(string_list(capability_configuration.get("required", [])))
 
     return unique_strings(names)
 
@@ -921,6 +974,256 @@ def runtime_config_status(agent: dict[str, Any], capability: dict[str, Any] | No
     return records
 
 
+def memory_records_path() -> Path:
+    return MEMORY_ROOT / "records.jsonl"
+
+
+def memory_record_id() -> str:
+    return f"memory_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}_{os.getpid()}"
+
+
+def normalize_memory_record(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    normalized["schemaVersion"] = normalized.get("schemaVersion", 1)
+    normalized["recordType"] = str(normalized.get("recordType", "memory_record")).strip() or "memory_record"
+    normalized["recordId"] = str(normalized.get("recordId", "")).strip() or memory_record_id()
+    normalized["createdAt"] = str(normalized.get("createdAt", "")).strip() or now_utc_iso()
+    redaction = normalized.get("redaction", {})
+    if not isinstance(redaction, dict):
+        redaction = {}
+    redaction.setdefault("secretsRemoved", True)
+    normalized["redaction"] = redaction
+    redacted = redact_memory_value(normalized)
+    if isinstance(redacted, dict):
+        redacted["redaction"] = redaction
+    return redacted
+
+
+def append_memory_record(record: dict[str, Any]) -> dict[str, Any]:
+    ensure_state_layout()
+    normalized = normalize_memory_record(record)
+    path = memory_records_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(normalized, sort_keys=True) + "\n")
+    return normalized
+
+
+def load_memory_records() -> list[dict[str, Any]]:
+    path = memory_records_path()
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return list(reversed(records))
+
+
+def parse_memory_time(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def nested_dict_value(record: dict[str, Any], *path: str) -> Any:
+    value: Any = record
+    for key in path:
+        if not isinstance(value, dict):
+            return ""
+        value = value.get(key, "")
+    return value
+
+
+def memory_confidence_values(record: dict[str, Any]) -> list[float]:
+    values: list[float] = []
+    candidates = [
+        record.get("confidence", ""),
+        nested_dict_value(record, "decision", "confidence"),
+        nested_dict_value(record, "recommendation", "confidence"),
+        nested_dict_value(record, "outcome", "confidence"),
+    ]
+    for candidate in candidates:
+        try:
+            values.append(float(candidate))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def memory_status_values(record: dict[str, Any]) -> set[str]:
+    values = [
+        record.get("status", ""),
+        nested_dict_value(record, "loop", "status"),
+        nested_dict_value(record, "outcome", "status"),
+        nested_dict_value(record, "userDecision", "status"),
+        nested_dict_value(record, "decision", "status"),
+    ]
+    return {str(value).lower() for value in values if value}
+
+
+def memory_outcome_values(record: dict[str, Any]) -> set[str]:
+    values = [
+        record.get("outcome", ""),
+        nested_dict_value(record, "outcome", "status"),
+        nested_dict_value(record, "outcome", "summary"),
+        nested_dict_value(record, "outcome", "result"),
+    ]
+    return {str(value).lower() for value in values if value}
+
+
+def memory_record_matches(record: dict[str, Any], args: argparse.Namespace) -> bool:
+    filters = {
+        "record_type": ("recordType", getattr(args, "record_type", "")),
+        "agent": ("agentId", getattr(args, "agent", "")),
+        "capability": ("capabilityId", getattr(args, "capability", "")),
+    }
+    for _name, (field, expected) in filters.items():
+        if expected and str(record.get(field, "")).lower() != str(expected).lower():
+            return False
+    expected_status = str(getattr(args, "status", "") or "").strip().lower()
+    if expected_status and expected_status not in memory_status_values(record):
+        return False
+    expected_outcome = str(getattr(args, "outcome", "") or "").strip().lower()
+    if expected_outcome:
+        if not any(expected_outcome in value for value in memory_outcome_values(record)):
+            return False
+    from_time = parse_memory_time(str(getattr(args, "from_date", "") or ""))
+    to_time = parse_memory_time(str(getattr(args, "to_date", "") or ""))
+    record_time = parse_memory_time(str(record.get("createdAt", "") or ""))
+    if from_time and (record_time is None or record_time < from_time):
+        return False
+    if to_time and (record_time is None or record_time > to_time):
+        return False
+    min_confidence = getattr(args, "min_confidence", None)
+    if min_confidence is not None:
+        confidence_values = memory_confidence_values(record)
+        if not confidence_values or max(confidence_values) < float(min_confidence):
+            return False
+    subject = str(getattr(args, "subject", "") or "").strip().lower()
+    if subject:
+        haystack = json.dumps(record, sort_keys=True).lower()
+        if subject not in haystack:
+            return False
+    return True
+
+
+def query_memory_records(args: argparse.Namespace) -> list[dict[str, Any]]:
+    limit = max(0, int(getattr(args, "limit", 20)))
+    records = [record for record in load_memory_records() if memory_record_matches(record, args)]
+    return records[:limit] if limit else records
+
+
+def first_text(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            text = first_text(value.get("summary"), value.get("message"), value.get("description"), value.get("request"))
+            if text:
+                return text
+    return ""
+
+
+def memory_record_prompt_summary(record: dict[str, Any]) -> str:
+    summary = first_text(
+        nested_dict_value(record, "decision", "summary"),
+        nested_dict_value(record, "recommendation", "summary"),
+        nested_dict_value(record, "outcome", "summary"),
+        nested_dict_value(record, "goal", "request"),
+        nested_dict_value(record, "goal", "summary"),
+        record.get("summary", ""),
+    )
+    if not summary:
+        events = record.get("events", [])
+        if isinstance(events, list):
+            event_messages = [
+                str(event.get("message", "")).strip()
+                for event in events
+                if isinstance(event, dict) and str(event.get("message", "")).strip()
+            ]
+            summary = "; ".join(event_messages[:3])
+    return redact_prompt_context_text(summary or "Relevant memory record.")
+
+
+def prompt_context_record(record: dict[str, Any]) -> dict[str, Any]:
+    user_decision = record.get("userDecision", {})
+    if not isinstance(user_decision, dict):
+        user_decision = {"status": str(user_decision)}
+    outcome = record.get("outcome", {})
+    if not isinstance(outcome, dict):
+        outcome = {"summary": str(outcome)}
+    context = {
+        "recordId": record.get("recordId", ""),
+        "recordType": record.get("recordType", ""),
+        "agentId": record.get("agentId", ""),
+        "capabilityId": record.get("capabilityId", ""),
+        "createdAt": record.get("createdAt", ""),
+        "summary": memory_record_prompt_summary(record),
+        "confidence": max(memory_confidence_values(record), default=None),
+        "userDecision": {
+            "status": user_decision.get("status", ""),
+            "summary": user_decision.get("summary", ""),
+        },
+        "outcome": {
+            "status": outcome.get("status", ""),
+            "summary": outcome.get("summary", ""),
+        },
+        "source": {
+            "provider": "mongoose.memory.v1",
+            "recordId": record.get("recordId", ""),
+        },
+    }
+    return redact_prompt_context_value(context)
+
+
+def memory_prompt_context(args: argparse.Namespace) -> dict[str, Any]:
+    records = query_memory_records(args)
+    context_records = [prompt_context_record(record) for record in records]
+    return {
+        "interface": "mongoose.prompt-context.v1",
+        "generatedAt": now_utc_iso(),
+        "query": {
+            "agentId": getattr(args, "agent", "") or "",
+            "capabilityId": getattr(args, "capability", "") or "",
+            "subject": getattr(args, "subject", "") or "",
+            "recordType": getattr(args, "record_type", "") or "",
+            "status": getattr(args, "status", "") or "",
+            "outcome": getattr(args, "outcome", "") or "",
+            "from": getattr(args, "from_date", "") or "",
+            "to": getattr(args, "to_date", "") or "",
+            "minConfidence": getattr(args, "min_confidence", None),
+            "limit": max(0, int(getattr(args, "limit", 8))),
+        },
+        "records": context_records,
+        "fallback": {
+            "used": not context_records,
+            "message": "No relevant memory records were found. Continue without memory-backed context.",
+        },
+        "guardrails": {
+            "authority": "informational-only",
+            "canApproveActions": False,
+            "canMutateState": False,
+            "redaction": "secrets, addresses, and unnecessary PII are removed before prompt use",
+        },
+    }
+
+
 def runtime_provider_descriptors(agent: dict[str, Any], capability: dict[str, Any] | None = None) -> dict[str, Any]:
     command_name = str(agent.get("commandName", "agent")).strip() or "agent"
     capability_name = str((capability or {}).get("name", "")).strip()
@@ -964,9 +1267,14 @@ def runtime_provider_descriptors(agent: dict[str, Any], capability: dict[str, An
             "path": str(storage_path),
         },
         "memory": {
-            "available": False,
+            "available": True,
             "interface": "mongoose.memory.v1",
-            "reason": "No durable memory provider is configured yet.",
+            "path": str(MEMORY_ROOT),
+            "recordsPath": str(memory_records_path()),
+            "appendCommand": [sys.executable, str(Path(__file__).resolve()), "memory", "append", "--json"],
+            "listCommand": [sys.executable, str(Path(__file__).resolve()), "memory", "list", "--json"],
+            "contextCommand": [sys.executable, str(Path(__file__).resolve()), "memory", "context", "--json"],
+            "reason": "",
         },
         "tools": {
             "available": False,
@@ -1335,14 +1643,34 @@ def route_score(record: dict[str, Any], query: str) -> int:
     return score
 
 
+def parse_json_object(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        payload = json.loads(stripped)
+        return payload if isinstance(payload, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        payload = json.loads(stripped[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def format_route_candidate(record: dict[str, Any]) -> str:
     task_types = record.get("taskTypes", [])
     suffix = f" [{', '.join(task_types)}]" if task_types else ""
     return f"{record['agentName']}::{record['capabilityName']}{suffix}"
 
 
-def matching_route_candidates(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str]:
-    capabilities = installed_capability_records()
+def route_candidate_pool(args: argparse.Namespace, capabilities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if args.agent:
         capabilities = [
             record for record in capabilities if record["agentName"].lower() == args.agent.lower()
@@ -1353,7 +1681,13 @@ def matching_route_candidates(args: argparse.Namespace) -> tuple[list[dict[str, 
             for record in capabilities
             if record["capabilityName"].lower() == args.capability.lower()
         ]
+    return capabilities
 
+
+def deterministic_route_candidates(
+    args: argparse.Namespace,
+    capabilities: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
     query = " ".join(args.request or []).strip()
     if args.task_type:
         requested = args.task_type.lower()
@@ -1373,6 +1707,145 @@ def matching_route_candidates(args: argparse.Namespace) -> tuple[list[dict[str, 
 
     best_score = max(score for score, _record in scored)
     return [record for score, record in scored if score == best_score], query
+
+
+def route_candidates_for_llm(args: argparse.Namespace, capabilities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if args.task_type:
+        requested = args.task_type.lower()
+        direct_matches = [
+            record
+            for record in capabilities
+            if requested in {task_type.lower() for task_type in record.get("taskTypes", [])}
+        ]
+        return direct_matches
+    return capabilities
+
+
+def matching_route_candidates(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str]:
+    return deterministic_route_candidates(args, route_candidate_pool(args, installed_capability_records()))
+
+
+def route_selection_capability_payload(record: dict[str, Any]) -> dict[str, Any]:
+    capability = record.get("capability", {})
+    return {
+        "agent": record["agentName"],
+        "capability": record["capabilityName"],
+        "displayName": record.get("displayName", ""),
+        "description": record.get("description", ""),
+        "taskTypes": record.get("taskTypes", []),
+        "llm": capability.get("llm", {}) if isinstance(capability, dict) else {},
+        "configuration": capability.get("configuration", {}) if isinstance(capability, dict) else {},
+    }
+
+
+def build_route_selection_prompt(
+    *,
+    request: str,
+    task_type: str,
+    candidates: list[dict[str, Any]],
+) -> str:
+    payload = {
+        "request": request,
+        "taskTypeHint": task_type,
+        "availableCapabilities": [
+            route_selection_capability_payload(record) for record in candidates
+        ],
+    }
+    return "\n".join(
+        [
+            "Mongoose needs to select one installed agent capability for the user request.",
+            "Use only the availableCapabilities list. Do not invent an installed capability.",
+            "If no installed capability fits, propose a capability or external tool to add.",
+            "Return only one JSON object in one of these forms:",
+            '{"action":"select","agent":"AgentName","capability":"capability-name","confidence":0.0,"reason":"short reason"}',
+            '{"action":"propose_tool","name":"tool-or-capability-name","description":"what it should do","reason":"why it is needed","requiredInputs":[]}',
+            "",
+            "Selection input:",
+            json.dumps(payload, indent=2, sort_keys=True),
+        ]
+    )
+
+
+def find_route_record(
+    capabilities: list[dict[str, Any]],
+    *,
+    agent_name: str,
+    capability_name: str,
+) -> dict[str, Any] | None:
+    for record in capabilities:
+        if (
+            record["agentName"].lower() == agent_name.lower()
+            and record["capabilityName"].lower() == capability_name.lower()
+        ):
+            return record
+    return None
+
+
+def llm_route_selection(
+    args: argparse.Namespace,
+    capabilities: list[dict[str, Any]],
+) -> dict[str, Any]:
+    query = " ".join(args.request or []).strip()
+    request = query or str(args.task_type or "").strip()
+    if not request:
+        return {"ok": False, "reason": "No request was available."}
+
+    profile_name, _profile, profile_error = resolve_llm_profile(None)
+    if profile_error:
+        return {"ok": False, "reason": "No configured LLM profile is available for route selection."}
+
+    code, payload = invoke_llm_profile(
+        profile_name=profile_name,
+        prompt=build_route_selection_prompt(
+            request=request,
+            task_type=str(args.task_type or ""),
+            candidates=capabilities,
+        ),
+        system_prompt=(
+            "You select installed Mongoose capabilities. Return strict JSON only. "
+            "Prefer an existing capability when it can satisfy the request; otherwise propose the missing tool."
+        ),
+    )
+    if code != 0 or not payload.get("ok"):
+        return {"ok": False, "reason": str(payload.get("message", "LLM route selection failed."))}
+
+    content = str(payload.get("response", {}).get("content", "")).strip()
+    decision = parse_json_object(content)
+    if decision is None:
+        return {"ok": False, "reason": "LLM route selection returned invalid JSON."}
+
+    action = str(decision.get("action", "")).strip()
+    if action == "select":
+        selected = find_route_record(
+            capabilities,
+            agent_name=str(decision.get("agent", "")).strip(),
+            capability_name=str(decision.get("capability", "")).strip(),
+        )
+        if selected is None:
+            return {"ok": False, "reason": "LLM route selection chose a capability that is not installed."}
+        return {
+            "ok": True,
+            "action": "select",
+            "record": selected,
+            "profile": payload.get("profile", ""),
+            "reason": str(decision.get("reason", "")).strip(),
+            "confidence": decision.get("confidence", ""),
+        }
+
+    if action == "propose_tool":
+        return {
+            "ok": True,
+            "action": "propose_tool",
+            "proposal": {
+                "name": str(decision.get("name", "")).strip() or "new-capability",
+                "description": str(decision.get("description", "")).strip(),
+                "reason": str(decision.get("reason", "")).strip(),
+                "requiredInputs": string_list(decision.get("requiredInputs", [])),
+            },
+            "profile": payload.get("profile", ""),
+        }
+
+    return {"ok": False, "reason": "LLM route selection did not select or propose a tool."}
 
 
 def ensure_registry(config: dict[str, Any]) -> Path:
@@ -1842,6 +2315,95 @@ def cmd_runtime_restart(args: argparse.Namespace) -> int:
     return cmd_runtime_start(args)
 
 
+def cmd_memory_append(args: argparse.Namespace) -> int:
+    if args.record_json:
+        try:
+            payload = json.loads(args.record_json)
+        except json.JSONDecodeError as exc:
+            print_error(f"Memory record JSON is invalid: {exc}")
+            return 1
+    elif args.record_file:
+        try:
+            payload = read_json(Path(args.record_file).expanduser())
+        except (OSError, ValueError) as exc:
+            print_error(str(exc))
+            return 1
+    else:
+        try:
+            payload = json.load(sys.stdin)
+        except json.JSONDecodeError as exc:
+            print_error(f"Memory record JSON is invalid: {exc}")
+            return 1
+
+    if not isinstance(payload, dict):
+        print_error("Memory record must be a JSON object.")
+        return 1
+
+    record = append_memory_record(payload)
+    if args.json:
+        print(json.dumps(record, indent=2, sort_keys=True))
+    else:
+        print_success("Memory record stored.")
+        print(label_line("Record", record.get("recordId", "")))
+        print(label_line("Type", record.get("recordType", "")))
+    return 0
+
+
+def cmd_memory_list(args: argparse.Namespace) -> int:
+    records = query_memory_records(args)
+    if args.json:
+        print(json.dumps(records, indent=2, sort_keys=True))
+        return 0
+    if not records:
+        print_warning("No memory records found.")
+        return 0
+    print_heading("Mongoose memory records")
+    for record in records:
+        agent = record.get("agentId", "")
+        capability = f"::{record.get('capabilityId')}" if record.get("capabilityId") else ""
+        print(
+            f"  {record.get('recordId')}  {record.get('recordType')}  "
+            f"{agent}{capability}  {record.get('createdAt', '')}"
+        )
+    return 0
+
+
+def cmd_memory_show(args: argparse.Namespace) -> int:
+    for record in load_memory_records():
+        if str(record.get("recordId", "")) == args.record_id:
+            if args.json:
+                print(json.dumps(record, indent=2, sort_keys=True))
+            else:
+                print_heading(f"Memory record: {record.get('recordId')}")
+                print(label_line("Type", record.get("recordType", "")))
+                print(label_line("Agent", record.get("agentId", "")))
+                if record.get("capabilityId"):
+                    print(label_line("Capability", record.get("capabilityId", "")))
+                print(label_line("Created", record.get("createdAt", ""), "muted"))
+                summary = record.get("decision", {}).get("summary") if isinstance(record.get("decision"), dict) else ""
+                if summary:
+                    print(label_line("Decision", summary))
+            return 0
+    print_error(f"Memory record '{args.record_id}' was not found.")
+    return 1
+
+
+def cmd_memory_context(args: argparse.Namespace) -> int:
+    context = memory_prompt_context(args)
+    if args.json:
+        print(json.dumps(context, indent=2, sort_keys=True))
+        return 0
+    print_heading("Mongoose prompt context")
+    if context["fallback"]["used"]:
+        print_warning(context["fallback"]["message"])
+        return 0
+    for record in context["records"]:
+        print(f"  {record.get('recordId')}  {record.get('recordType')}  {record.get('createdAt', '')}")
+        print(f"    {record.get('summary', '')}")
+    print_muted("Context is informational only; it cannot approve actions or mutate state.")
+    return 0
+
+
 def cmd_jobs_list(args: argparse.Namespace) -> int:
     jobs = load_job_records()[: args.limit]
     if args.json:
@@ -2169,16 +2731,40 @@ def cmd_route(args: argparse.Namespace) -> int:
         print_muted("Install agents with manifest capability metadata before routing.")
         return 1
 
-    matches, query = matching_route_candidates(args)
+    candidate_capabilities = route_candidate_pool(args, all_capabilities)
+    llm_candidate_capabilities = route_candidates_for_llm(args, candidate_capabilities)
+    query = " ".join(args.request or []).strip()
+    llm_selection = llm_route_selection(args, llm_candidate_capabilities)
+    llm_proposal = None
+    if llm_selection.get("ok") and llm_selection.get("action") == "select":
+        matches = [llm_selection["record"]]
+    elif llm_selection.get("ok") and llm_selection.get("action") == "propose_tool":
+        matches = []
+        llm_proposal = llm_selection.get("proposal", {})
+    else:
+        matches, query = deterministic_route_candidates(args, candidate_capabilities)
+
     if not matches:
         print_error("No installed capability can handle that request.")
         if args.task_type:
             print(f"Requested task type: {args.task_type}")
         elif query:
             print(f"Request: {query}")
+        if llm_proposal:
+            print("")
+            print_heading("Suggested capability or tool to add")
+            print(label_line("Name", llm_proposal.get("name", "")))
+            if llm_proposal.get("description"):
+                print(label_line("Description", llm_proposal.get("description", "")))
+            if llm_proposal.get("reason"):
+                print(label_line("Reason", llm_proposal.get("reason", "")))
+            if llm_proposal.get("requiredInputs"):
+                print(label_line("Required inputs", ", ".join(llm_proposal.get("requiredInputs", []))))
+            if llm_selection.get("profile"):
+                print(label_line("LLM selector", llm_selection.get("profile", ""), "muted"))
         print("")
         print_heading("Installed capabilities")
-        for record in all_capabilities:
+        for record in candidate_capabilities or all_capabilities:
             print(f"  {format_route_candidate(record)}")
         return 1
 
@@ -2252,6 +2838,13 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     agent_args = [selected["capabilityName"], *(args.request or [])]
     print(label_line("Selected", format_route_candidate(selected), "success"))
+    if llm_selection.get("ok") and llm_selection.get("action") == "select":
+        profile = llm_selection.get("profile", "")
+        reason = llm_selection.get("reason", "")
+        selector = f"LLM ({profile})" if profile else "LLM"
+        print(label_line("Selector", selector, "muted"))
+        if reason:
+            print(label_line("Selection reason", reason, "muted"))
     if args.dry_run:
         print(label_line("Entrypoint", entrypoint, "muted"))
         print(label_line("Arguments", " ".join(agent_args), "muted"))
@@ -2759,8 +3352,201 @@ def fake_llm_invoke(profile: dict[str, Any], messages: list[dict[str, str]]) -> 
         if message.get("role") == "user":
             user_text = message.get("content", "")
             break
-    trimmed = " ".join(user_text.split())[:160]
-    content = f"Fake LLM narration based on deterministic context: {trimmed}"
+    request_text = user_text
+    if "Selection input:" in user_text:
+        selection_payload = parse_json_object(user_text.split("Selection input:", 1)[1])
+        if isinstance(selection_payload, dict) and selection_payload.get("request") is not None:
+            request_text = str(selection_payload.get("request", ""))
+    lowered_request = request_text.lower()
+
+    if "Njord needs to select one installed capability" in user_text:
+        if "weekly" in lowered_request or "brief" in lowered_request:
+            selected = "brief"
+        elif "spending" in lowered_request or "transactions" in lowered_request or "cash flow" in lowered_request:
+            selected = "ynab-spending-review"
+        elif "risk" in lowered_request or "forecast" in lowered_request or "finance review" in lowered_request or "review my finances" in lowered_request:
+            selected = "finance-review"
+        elif "config" in lowered_request or "credential" in lowered_request:
+            selected = "config-status"
+        elif "hello" in lowered_request or "connection" in lowered_request:
+            selected = "hello-world"
+        else:
+            selected = "ynab-budget-summary"
+        content = json.dumps(
+            {
+                "capability": selected,
+                "confidence": 0.9,
+                "reason": "Selected by the fake configured LLM for validation.",
+            },
+            sort_keys=True,
+        )
+    elif "Mongoose needs to select one installed agent capability" in user_text:
+        lowered = user_text.lower()
+        if "weather" in lowered_request or "calendar" in lowered_request:
+            content = json.dumps(
+                {
+                    "action": "propose_tool",
+                    "name": "weather-lookup",
+                    "description": "Look up current weather and forecasts for a requested location.",
+                    "reason": "No installed capability exposes weather data.",
+                    "requiredInputs": ["location"],
+                },
+                sort_keys=True,
+            )
+        elif '"agent": "Njord"' in user_text and '"capability": "brief"' in user_text and (
+            "weekly" in lowered_request or "brief" in lowered_request
+        ):
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Njord",
+                    "capability": "brief",
+                    "confidence": 0.92,
+                    "reason": "The request asks for a weekly financial brief.",
+                },
+                sort_keys=True,
+            )
+        elif '"agent": "Njord"' in user_text and '"capability": "ynab-spending-review"' in user_text and (
+            "spending" in lowered_request or "transactions" in lowered_request or "cash flow" in lowered_request
+        ):
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Njord",
+                    "capability": "ynab-spending-review",
+                    "confidence": 0.92,
+                    "reason": "The request asks about spending or transactions.",
+                },
+                sort_keys=True,
+            )
+        elif '"agent": "Njord"' in user_text and '"capability": "finance-review"' in user_text and (
+            "risk" in lowered_request or "forecast" in lowered_request or "review my finances" in lowered_request
+        ):
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Njord",
+                    "capability": "finance-review",
+                    "confidence": 0.92,
+                    "reason": "The request asks for a finance review.",
+                },
+                sort_keys=True,
+            )
+        elif '"agent": "Njord"' in user_text and '"capability": "ynab-budget-summary"' in user_text and (
+            "budget" in lowered_request or "summary" in lowered_request or "ynab" in lowered_request
+        ):
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Njord",
+                    "capability": "ynab-budget-summary",
+                    "confidence": 0.88,
+                    "reason": "The request asks for a budget summary.",
+                },
+                sort_keys=True,
+            )
+        elif '"agent": "Njord"' in user_text and '"capability": "config-status"' in user_text:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Njord",
+                    "capability": "config-status",
+                    "confidence": 0.93,
+                    "reason": "The request asks for configuration status.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "report"' in lowered and "summary" in lowered_request:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Beta",
+                    "capability": "report",
+                    "confidence": 0.92,
+                    "reason": "The request asks for a report or summary.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "plan"' in lowered and ("build" in lowered_request or "steps" in lowered_request):
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Alpha",
+                    "capability": "plan",
+                    "confidence": 0.9,
+                    "reason": "The request asks for work planning.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "llm-ready"' in lowered:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Alpha",
+                    "capability": "llm-ready",
+                    "confidence": 0.95,
+                    "reason": "The task type is constrained to the LLM-ready capability.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "llm-only"' in lowered:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Alpha",
+                    "capability": "llm-only",
+                    "confidence": 0.95,
+                    "reason": "The task type is constrained to the LLM-only capability.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "secure"' in lowered:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Alpha",
+                    "capability": "secure",
+                    "confidence": 0.95,
+                    "reason": "The task type is constrained to the secure capability.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "future"' in lowered or '"capability": "future-runtime"' in lowered:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "FutureRuntime",
+                    "capability": "future",
+                    "confidence": 0.95,
+                    "reason": "The task type is constrained to the future runtime capability.",
+                },
+                sort_keys=True,
+            )
+        elif '"capability": "echo"' in lowered:
+            content = json.dumps(
+                {
+                    "action": "select",
+                    "agent": "Alpha",
+                    "capability": "echo",
+                    "confidence": 0.6,
+                    "reason": "The request fits the generic echo diagnostic capability.",
+                },
+                sort_keys=True,
+            )
+        else:
+            content = json.dumps(
+                {
+                    "action": "propose_tool",
+                    "name": "new-capability",
+                    "description": "Add a capability that can handle the requested work.",
+                    "reason": "The installed capability metadata does not cover the request.",
+                    "requiredInputs": [],
+                },
+                sort_keys=True,
+            )
+    else:
+        trimmed = " ".join(user_text.split())[:160]
+        content = f"Fake LLM narration based on deterministic context: {trimmed}"
     return {
         "ok": True,
         "message": "Fake LLM provider invoked.",
@@ -3266,7 +4052,7 @@ def build_architecture_model(root: Path) -> dict[str, Any]:
             {"name": "state", "status": "implemented", "interface": "user-local state directories"},
             {"name": "storage", "status": "implemented", "interface": "agent-scoped local storage path"},
             {"name": "llm", "status": "profile-management", "interface": "provider-neutral LLM profiles and ping"},
-            {"name": "memory", "status": "planned", "interface": "runtime provider descriptor"},
+            {"name": "memory", "status": "implemented", "interface": "redacted local JSONL memory records"},
             {"name": "tools", "status": "planned", "interface": "runtime provider descriptor"},
             {"name": "apiProfiles", "status": "planned", "interface": "configured external API profiles"},
         ],
@@ -3609,6 +4395,66 @@ workflow:
     jobs_cancel = jobs_subparsers.add_parser("cancel", help="Request cancellation for an active job.")
     jobs_cancel.add_argument("id", help="Job id to cancel.")
     jobs_cancel.set_defaults(handler=cmd_jobs_cancel)
+
+    memory = subparsers.add_parser(
+        "memory",
+        help="Append and inspect local shared memory records.",
+        description="Store and query redacted local memory records used by loop-aware capabilities.",
+    )
+    memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
+    memory_append = memory_subparsers.add_parser(
+        "append",
+        help="Append one memory record from JSON.",
+        description="Append one redacted memory record from --record-json, --record-file, or stdin.",
+    )
+    memory_append.add_argument("--record-json", help="Memory record JSON object.")
+    memory_append.add_argument("--record-file", help="Path to a JSON file containing one memory record object.")
+    memory_append.add_argument("--json", action="store_true", help="Print the stored record as JSON.")
+    memory_append.set_defaults(handler=cmd_memory_append)
+
+    memory_list = memory_subparsers.add_parser(
+        "list",
+        aliases=["ls"],
+        help="List stored memory records.",
+    )
+    memory_list.add_argument("--limit", type=int, default=20, help="Maximum records to show; use 0 for all.")
+    memory_list.add_argument("--agent", help="Filter by agentId.")
+    memory_list.add_argument("--capability", help="Filter by capabilityId.")
+    memory_list.add_argument("--record-type", help="Filter by recordType.")
+    memory_list.add_argument("--status", help="Filter by top-level, loop, outcome, or user decision status.")
+    memory_list.add_argument("--outcome", help="Filter by outcome status, summary, or result text.")
+    memory_list.add_argument("--from", dest="from_date", help="Filter records created at or after this ISO timestamp.")
+    memory_list.add_argument("--to", dest="to_date", help="Filter records created at or before this ISO timestamp.")
+    memory_list.add_argument("--min-confidence", type=float, help="Filter records below this confidence value.")
+    memory_list.add_argument("--subject", help="Case-insensitive text search across the stored record.")
+    memory_list.add_argument("--json", action="store_true", help="Print matching records as JSON.")
+    memory_list.set_defaults(handler=cmd_memory_list)
+
+    memory_context = memory_subparsers.add_parser(
+        "context",
+        help="Build compact prompt context from memory records.",
+        description="Return prompt-ready memory summaries with provenance, redaction, and informational-only guardrails.",
+    )
+    memory_context.add_argument("--limit", type=int, default=8, help="Maximum context records to include; use 0 for all.")
+    memory_context.add_argument("--agent", help="Filter by agentId.")
+    memory_context.add_argument("--capability", help="Filter by capabilityId.")
+    memory_context.add_argument("--record-type", help="Filter by recordType.")
+    memory_context.add_argument("--status", help="Filter by top-level, loop, outcome, or user decision status.")
+    memory_context.add_argument("--outcome", help="Filter by outcome status, summary, or result text.")
+    memory_context.add_argument("--from", dest="from_date", help="Filter records created at or after this ISO timestamp.")
+    memory_context.add_argument("--to", dest="to_date", help="Filter records created at or before this ISO timestamp.")
+    memory_context.add_argument("--min-confidence", type=float, help="Filter records below this confidence value.")
+    memory_context.add_argument("--subject", help="Case-insensitive text search across the stored record.")
+    memory_context.add_argument("--json", action="store_true", help="Print prompt context as JSON.")
+    memory_context.set_defaults(handler=cmd_memory_context)
+
+    memory_show = memory_subparsers.add_parser(
+        "show",
+        help="Show one memory record.",
+    )
+    memory_show.add_argument("record_id", help="Memory record id to inspect.")
+    memory_show.add_argument("--json", action="store_true", help="Print the record as JSON.")
+    memory_show.set_defaults(handler=cmd_memory_show)
 
     list_parser = subparsers.add_parser(
         "list",
