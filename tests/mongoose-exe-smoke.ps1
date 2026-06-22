@@ -70,7 +70,7 @@ $env:LOCALAPPDATA = $testLocalAppData
 
 $version = Invoke-MongooseExe -Arguments @("--version")
 Assert-True ($version.ExitCode -eq 0) "mongoose.exe --version failed. Output: $($version.Output)"
-Assert-True ($version.Output -match "mongoose 0.8.0") "mongoose.exe --version did not report expected version."
+Assert-True ($version.Output -match "mongoose 0.9.0") "mongoose.exe --version did not report expected version."
 $expectedReleaseKind = "development"
 if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -match "^v") {
     $expectedReleaseKind = "official release"
@@ -86,7 +86,7 @@ $statePaths = $state.Output | ConvertFrom-Json
 Assert-True (Test-Path $statePaths.state) "mongoose state did not create the shared state directory."
 Assert-True (Test-Path $statePaths.logs) "mongoose state did not create the log directory."
 Assert-True (Test-Path $statePaths.jobs) "mongoose state did not create the jobs directory."
-Assert-True ($statePaths.version -eq "0.8.0") "mongoose state did not report CLI version."
+Assert-True ($statePaths.version -eq "0.9.0") "mongoose state did not report CLI version."
 if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -match "^v") {
     Assert-True ($statePaths.releaseKind -eq "official") "mongoose state did not report official release kind."
     Assert-True ($statePaths.releaseTag -eq $env:GITHUB_REF_NAME) "mongoose state did not report the release tag."

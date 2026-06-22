@@ -192,6 +192,13 @@ as source material for a conversational answer instead of exposing the user to
 the raw command report. Natural-language requests can ask for a finance review,
 but they cannot mutate YNAB before guarded planning and write execution exist.
 
+When Njord is launched by Mongoose with the v0.9 memory provider, each finance
+review appends a `loop_aware_memory_record` through `mongoose.memory.v1`. The
+record keeps replay-safe fact packet summaries, validation status,
+user-facing loop events, and an informational decision outcome so future prompt
+context can remember prior reviews without granting approval or write
+authority.
+
 If no Mongoose LLM profile is configured, or if the backend does not return
 valid structured JSON, Njord keeps the deterministic review visible and reports
 that the LLM decision was unavailable.

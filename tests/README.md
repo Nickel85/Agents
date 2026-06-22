@@ -200,6 +200,34 @@ This test verifies:
 
 The test uses `.test-localappdata-mongoose-state/` as a temporary local AppData substitute. That folder is ignored by Git.
 
+## Mongoose Memory Validation
+
+Script:
+
+```text
+tests/mongoose-memory-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\mongoose-memory-validation.py
+```
+
+This test verifies:
+
+- `mongoose state --init --json` creates and reports the local memory directory.
+- `mongoose memory append` stores redacted JSONL records.
+- generated record ids, default schema version, and redaction metadata are
+  applied.
+- `mongoose memory list` filters by agent, capability, record type, status, and
+  subject text.
+- `mongoose memory context` returns prompt-ready summaries with provenance,
+  deterministic fallback, redaction, and informational-only guardrails.
+- `mongoose memory show` returns a single record by id.
+- Runtime Contract v1 exposes the available `mongoose.memory.v1` provider with
+  append/list/context commands for capabilities.
+
 ## Runtime Observability Validation
 
 Script:
@@ -244,6 +272,110 @@ This test verifies:
 - explicit timeout overrides are still respected.
 - `mongoose llm setup --provider ollama` warms an installed local model even
   when `--bootstrap` is not used.
+
+## Loop-Aware Memory Contract Validation
+
+Script:
+
+```text
+tests/loop-aware-memory-contract-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\loop-aware-memory-contract-validation.py
+```
+
+This test verifies the v0.9 loop-aware memory contract documentation:
+
+- minimal `loop_aware_memory_record` schema fields are documented.
+- durable user-facing event kinds are documented.
+- transient `Thinking.`, `Thinking..`, `Thinking...` indicators are documented.
+- terminal renderers are required to overwrite transient indicators on one line.
+- memory records are separated from the future full Loop Runtime and Execution
+  Traces.
+- secret, raw provider payload, and private reasoning boundaries are stated.
+
+## Decision/Rule/Experiment Contract Validation
+
+Script:
+
+```text
+tests/decision-rule-experiment-contract-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\decision-rule-experiment-contract-validation.py
+```
+
+This test verifies the v0.9 shared decision/rule/experiment memory contract:
+
+- `decision_record`, `rule_record`, and `experiment_record` shapes are
+  documented as shared-memory record types.
+- lifecycle states, evidence links, outcomes, review windows, and
+  user-decision markers are documented.
+- queryability expectations cover domain, target, date range, status, review
+  due date, rule id, experiment id, and outcome.
+- the contract distinguishes domain records from loop-aware memory records and
+  future Execution Traces.
+- redaction boundaries and no-write-automation guardrails are stated.
+
+## Njord Finance Memory Validation
+
+Script:
+
+```text
+tests/njord-finance-memory-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\njord-finance-memory-validation.py
+```
+
+This test verifies the v0.9 Njord finance audit-to-memory path:
+
+- Mongoose Runtime Contract v1 exposes `mongoose.memory.v1` to Njord.
+- `finance-review` stores one `loop_aware_memory_record` through the shared
+  memory provider.
+- stored records preserve capability identity, fact packet references,
+  validation status, user-facing loop events, and replay-safe summaries.
+- memory-backed prompt context can retrieve the finance review record with
+  provenance and informational-only guardrails.
+- no YNAB secret key is written into the stored finance memory.
+
+## Portfolio Thesis Validation
+
+Script:
+
+```text
+tests/portfolio-thesis-validation.py
+```
+
+Run locally from the repository root:
+
+```powershell
+python .\tests\portfolio-thesis-validation.py
+```
+
+This test verifies the v0.9 Portfolio thesis reference capability:
+
+- investment theses can be created, listed, shown, archived, and reviewed.
+- positions can be associated with a thesis as aligned or hedge exposure.
+- evidence records preserve source, stance, confidence impact, and affected
+  assets.
+- deployed-capital summaries report intended allocation, actual exposure, and
+  drift.
+- Portfolio appends `loop_aware_memory_record` entries through
+  `mongoose.memory.v1`.
+- memory-backed prompt context can retrieve thesis memory with provenance and
+  informational-only guardrails.
+- review output stays research-only and does not imply financial advice or
+  brokerage execution.
 
 ## Release Version Validation
 

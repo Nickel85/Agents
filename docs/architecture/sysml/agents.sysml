@@ -88,4 +88,28 @@ package MongooseAgents {
   }
   connect runtime to njord;
 
+  part portfolio : Agent {
+    attribute commandName = "Portfolio";
+    attribute displayName = "Portfolio";
+    attribute manifestPath = "agents/portfolio/agent.json";
+    attribute entrypointPath = "agents/portfolio/agent.py";
+    attribute llmMode = "none";
+    attribute taskType = "investment";
+    attribute taskType = "portfolio";
+    attribute taskType = "research";
+    attribute taskType = "thesis";
+    part portfolio_thesis : Capability {
+      attribute name = "thesis";
+      attribute displayName = "Thesis Management";
+      attribute entrypointPath = "agents/portfolio/agent.py";
+      attribute llmMode = "none";
+      attribute taskType = "investment-thesis";
+      attribute taskType = "memory";
+      attribute taskType = "portfolio";
+      attribute taskType = "research-review";
+      attribute taskType = "thesis";
+    }
+  }
+  connect runtime to portfolio;
+
 }

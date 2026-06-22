@@ -215,11 +215,17 @@ mongoose show Njord
 mongoose capabilities
 ```
 
-Once agents are installed, Mongoose can route requests across declared capabilities with deterministic task-type matching:
+Once agents are installed, Mongoose can route requests across declared capabilities.
+When a default LLM profile is configured, `mongoose route` asks that LLM to select
+from installed capability metadata first. If the LLM is unavailable or returns an
+invalid selection, Mongoose falls back to deterministic task-type and request-text
+matching. If no installed capability fits, the LLM can propose a capability or
+tool to add:
 
 ```powershell
 mongoose route --task-type budget-summary "current budget"
 mongoose route --task-type weekly-brief "weekly financial brief"
+mongoose route "weather in Boston"
 ```
 
 Mongoose records jobs for `mongoose run` and non-dry-run `mongoose route`

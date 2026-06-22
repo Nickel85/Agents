@@ -25,6 +25,10 @@ jobs:
         shell: pwsh
         run: python ./tests/mongoose-state-validation.py
 
+      - name: Validate mongoose memory provider
+        shell: pwsh
+        run: python ./tests/mongoose-memory-validation.py
+
       - name: Validate mongoose runtime observability
         shell: pwsh
         run: python ./tests/mongoose-runtime-observability-validation.py
@@ -32,6 +36,22 @@ jobs:
       - name: Validate mongoose LLM cold-start behavior
         shell: pwsh
         run: python ./tests/mongoose-llm-cold-start-validation.py
+
+      - name: Validate loop-aware memory contract
+        shell: pwsh
+        run: python ./tests/loop-aware-memory-contract-validation.py
+
+      - name: Validate decision/rule/experiment memory contract
+        shell: pwsh
+        run: python ./tests/decision-rule-experiment-contract-validation.py
+
+      - name: Validate Njord finance memory records
+        shell: pwsh
+        run: python ./tests/njord-finance-memory-validation.py
+
+      - name: Validate Portfolio thesis memory records
+        shell: pwsh
+        run: python ./tests/portfolio-thesis-validation.py
 
       - name: Validate release version metadata
         shell: pwsh

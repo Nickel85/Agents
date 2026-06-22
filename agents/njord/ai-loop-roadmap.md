@@ -33,6 +33,23 @@ Foundation issues:
 - #154 gates later milestones on these contracts.
 - #155 exposes the finance review in the REPL.
 
+## v0.9 Shared Memory
+
+v0.9 keeps the same read-only finance review loops and stores their replay-safe
+audit summaries through the Mongoose shared memory provider. The finance review
+maps each run into a `loop_aware_memory_record` with:
+
+- capability identity and user request.
+- cash-flow and financial-risk loop definition ids.
+- YNAB snapshot read references and deterministic fact packet summaries.
+- optional LLM decision metadata and validation status.
+- user-facing progress and decision events.
+- informational user-decision status, because no YNAB write is approved or
+  executed by the review.
+
+The stored memory record supports later prompt context and replay-safe review,
+but it is not a write plan, approval, execution trace, or shared Loop Runtime.
+
 ## Dependency Map
 
 ```mermaid
@@ -69,4 +86,3 @@ separate loops:
 
 The finance review composes both loops, so future budget planning can consume a
 single interaction output without merging their responsibilities.
-
